@@ -1,0 +1,135 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      "categoria": "Informática e Acessórios",
+      "produtos": [
+        { "nome": "Mouse Óptico (reposição)", "unidadeMedidaPadrao": "UNIDADE" },
+        { "nome": "Teclado USB (reposição)", "unidadeMedidaPadrao": "UNIDADE" },
+        { "nome": "Cabo HDMI", "unidadeMedidaPadrao": "UNIDADE" },
+        { "nome": "Cabo de Rede (Patch Cord)", "unidadeMedidaPadrao": "UNIDADE" },
+        { "nome": "Pilha AA", "unidadeMedidaPadrao": "PACOTE" },
+        { "nome": "Pilha AAA", "unidadeMedidaPadrao": "PACOTE" },
+        { "nome": "Pen Drive", "unidadeMedidaPadrao": "UNIDADE" },
+        { "nome": "Extensão Elétrica / Filtro de Linha", "unidadeMedidaPadrao": "UNIDADE" },
+        { "nome": "Mousepad", "unidadeMedidaPadrao": "UNIDADE" }
+      ]
+    },
+    {
+      "categoria": "Sinalização e Identificação",

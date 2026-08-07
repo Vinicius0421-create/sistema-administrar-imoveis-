@@ -1,0 +1,1434 @@
+// Schema do backend "Administrar Imóveis".
+// Migrado a partir de duas fontes que precisavam ser conciliadas:
+//   1) Estrutura_Sistema_Airtable_Administrar.md (modelo relacional original)
+//   2) sistema-administrar-imoveis.jsx (protótipo React com storage local)
+// Duas correções estruturais em relação ao protótipo:
+//   - Nomes de colaborador deixam de ser duplicados como string em cada tabela
+//     filha (equipamento.colaboradorNome etc.) — agora só existe a FK, e o nome
+//     é resolvido via join/include no momento da leitura.
+//   - Autenticação (Usuario) e trilha de auditoria (AuditLog) passam a existir
+//     de fato, substituindo o seletor de papel client-side do protótipo.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Domínio / listas mestras
+// ---------------------------------------------------------------------------
+
+model Unidade {
+  id     String   @id @default(cuid())
+  nome   String   @unique
+  status StatusAtivoInativo @default(ATIVO)
+
+  colaboradores       Colaborador[]
+  linhas              LinhaTelefonica[]
+  // Back-relation de SolicitacaoEquipamento.unidadeId (recuperado 07/08/2026)
+  solicitacoes        SolicitacaoEquipamento[]
+  movimentacoesOrigem MovimentacaoColaborador[] @relation("UnidadeAnterior")
+  movimentacoesDestino MovimentacaoColaborador[] @relation("NovaUnidade")
+  // Relações recuperadas junto com Mensagem/SolicitacaoServico (07/08/2026)
+  mensagens            Mensagem[]
+  solicitacoesServico  SolicitacaoServico[]
+  chamados             ChamadoManutencao[]
+  // Relação recuperada junto com o módulo de Papelaria (07/08/2026)
+  solicitacoesPapelaria SolicitacaoPapelaria[]
+  // Back-relation de AcessoCanalExtra.unidadeDestinoId (recuperado 07/08/2026)
+  acessosCanalExtraDestino AcessoCanalExtra[]
+
+  @@map("unidades")
+}
+
+model Setor {
+  id     String   @id @default(cuid())
+  nome   String   @unique
+  status StatusAtivoInativo @default(ATIVO)
+
+  cargos               Cargo[]
+  colaboradores        Colaborador[]
+  movimentacoesOrigem  MovimentacaoColaborador[] @relation("SetorAnterior")
+  movimentacoesDestino MovimentacaoColaborador[] @relation("NovoSetor")
+  // Relação recuperada junto com Mensagem (07/08/2026)
+  mensagens            Mensagem[]
+  // Back-relations de AcessoCanalExtra (recuperado 07/08/2026)
+  acessosCanalExtraOrigem  AcessoCanalExtra[] @relation("SetorOrigemAcessoExtra")
+  acessosCanalExtraDestino AcessoCanalExtra[] @relation("SetorDestinoAcessoExtra")
+
+  @@map("setores")
+}
+
+model Cargo {
+  id      String @id @default(cuid())
+  nome    String
+  setorId String
+  setor   Setor  @relation(fields: [setorId], references: [id])
+
+  colaboradores Colaborador[]
+
+  @@unique([nome, setorId])
+  @@map("cargos")
+}
+
+model Empresa {
+  id          String @id @default(cuid())
+  razaoSocial String @unique
+  cnpj        String? @unique
+
+  linhas LinhaTelefonica[]
+
+  @@map("empresas")
+}
+
+model SistemaAcesso {
+  id        String  @id @default(cuid())
+  nome      String  @unique
+  descricao String?
+
+  acessos AcessoSistema[]
+
+  @@map("sistemas_acesso")
+}
+
+// Listas administráveis de Patrimônio (Fase 1 da Evolução Completa — antes
+// "tipo"/"marca" eram texto livre digitado a cada cadastro; viram tabelas de
+// domínio para permitir filtro/relatório consistente, sem remover os campos
+// de texto livre originais — mantidos para não quebrar dados já existentes).
+model CategoriaEquipamento {
+  id     String @id @default(cuid())
+  nome   String @unique
+  status StatusAtivoInativo @default(ATIVO)
+
+  equipamentos Equipamento[]
+  // Back-relation do catálogo de acessórios (recuperado 07/08/2026)
+  acessorios   AcessorioEquipamento[]
+
+  @@map("categorias_equipamento")
+}
+
+model MarcaEquipamento {
+  id     String @id @default(cuid())
+  nome   String @unique
+  status StatusAtivoInativo @default(ATIVO)
+
+  equipamentos Equipamento[]
+
+  @@map("marcas_equipamento")
+}
+
+// ---------------------------------------------------------------------------
+// Autenticação e autorização
+// Substitui o <select> "Ver como: ..." do protótipo, que não impunha nenhuma
+// restrição real de acesso no servidor.
+// ---------------------------------------------------------------------------
+
+// RH e FINANCEIRO recuperados 07/08/2026 a partir do uso real em
+// solicitacoesPapelaria.routes.ts (RH aprova solicitações; ambos aparecem em
+// listas de autorização junto com ADMINISTRADOR) — não estavam no dump
+// original de schema.prisma encontrado nas transcrições, mas a evidência de
+// uso nas rotas é inequívoca. Consistente com o pedido bloqueado antes desta
+// recuperação ("dar ao papel FINANCEIRO permissão de cadastrar colaborador").
+enum Papel {
+  ADMINISTRADOR
+  GESTOR_COORDENADOR
+  SUPORTE_TI
+  COLABORADOR
+  RH
+  FINANCEIRO
+}
+
+model Usuario {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  senhaHash     String
+  papel         Papel
+  ativo         Boolean  @default(true)
+  // Ativado sempre que uma senha temporária/compartilhada é atribuída (ex:
+  // provisionamento em lote). Enquanto true, a API bloqueia qualquer rota
+  // além de /auth/me e /auth/senha — obriga a pessoa a escolher uma senha
+  // só dela antes de usar o resto do sistema.
+  precisaTrocarSenha Boolean @default(true)
+  colaboradorId String?  @unique
+  colaborador   Colaborador? @relation(fields: [colaboradorId], references: [id])
+  criadoEm      DateTime @default(now())
+  atualizadoEm  DateTime @updatedAt
+
+  refreshTokens RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
+  auditLogs     AuditLog[]
+  solicitacoesAprovadas SolicitacaoEquipamento[] @relation("Aprovador")
+  solicitacoesComoTecnico SolicitacaoEquipamento[] @relation("TecnicoResponsavelSolicitacao")
+  chamadosResponsavel   ChamadoManutencao[]      @relation("Responsavel")
+  movimentacoesResponsavel MovimentacaoColaborador[] @relation("ResponsavelMovimentacao")
+  historicosResponsavel HistoricoTroca[]         @relation("ResponsavelHistorico")
+  eventosChamadoAutor   ChamadoEvento[]          @relation("AutorEventoChamado")
+  // Relações recuperadas junto com Mensagem/Notificacao/SolicitacaoServico (07/08/2026)
+  mensagensEnviadas     Mensagem[]               @relation("MensagensEnviadas")
+  mensagensRecebidas    Mensagem[]               @relation("MensagensRecebidas")
+  notificacoesRecebidas Notificacao[]            @relation("DestinatarioNotificacao")
+  notificacoesOrigem    Notificacao[]            @relation("OrigemNotificacao")
+  eventosSolicitacaoServicoAutor SolicitacaoServicoEvento[] @relation("AutorEventoSolicitacaoServico")
+  // Relações recuperadas junto com o módulo de Papelaria (07/08/2026)
+  solicitacoesPapelariaResponsavel SolicitacaoPapelaria[] @relation("ResponsavelSolicitacaoPapelaria")
+  solicitacoesPapelariaAprovadas   SolicitacaoPapelaria[] @relation("AprovadorSolicitacaoPapelaria")
+  solicitacoesPapelariaCriadas     SolicitacaoPapelaria[] @relation("CriadorSolicitacaoPapelaria")
+  eventosSolicitacaoPapelariaAutor EventoSolicitacaoPapelaria[] @relation("AutorEventoSolicitacaoPapelaria")
+  // Back-relation de AnexoEquipamento.enviadoPorId (recuperado 07/08/2026)
+  anexosEquipamentoEnviados AnexoEquipamento[]
+  // Back-relations de preferências (recuperado 07/08/2026)
+  preferenciaNotificacao PreferenciaNotificacao?
+  preferenciaUsuario     PreferenciaUsuario?
+  // Back-relation de LeituraCanal.usuarioId (recuperado 07/08/2026)
+  leiturasCanal          LeituraCanal[]
+
+  @@map("usuarios")
+}
+
+model RefreshToken {
+  id         String    @id @default(cuid())
+  tokenHash  String    @unique
+  usuarioId  String
+  usuario    Usuario   @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  expiraEm   DateTime
+  revogadoEm DateTime?
+  // Agrupa tokens da mesma "linhagem" de rotação — permite revogar toda a
+  // família de uma vez se um refresh token reusado (já revogado) for
+  // apresentado de novo, sinal de possível roubo de token. Recuperado 07/08/2026.
+  familyId   String?
+  criadoEm   DateTime  @default(now())
+
+  @@index([usuarioId])
+  @@index([familyId])
+  @@map("refresh_tokens")
+}
+
+// "Esqueci minha senha" self-service (07/07/2026). Token opaco (não-JWT),
+// hash guardado no banco (nunca o valor puro), uso único (usadoEm),
+// expiração curta. Recuperado 07/08/2026 a partir do uso real em auth.routes.ts.
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  usuarioId String
+  usuario   Usuario   @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  expiraEm  DateTime
+  usadoEm   DateTime?
+  criadoEm  DateTime  @default(now())
+
+  @@index([usuarioId])
+  @@map("password_reset_tokens")
+}
+
+// Trilha de auditoria — cobre o gap apontado na revisão do protótipo: acesso a
+// dado sensível (CPF) e qualquer escrita relevante deve ficar rastreável.
+model AuditLog {
+  id         String   @id @default(cuid())
+  usuarioId  String?
+  usuario    Usuario? @relation(fields: [usuarioId], references: [id])
+  acao       String   // ex: "LOGIN", "VISUALIZAR_CPF", "CRIAR", "ATUALIZAR", "EXCLUIR"
+  entidade   String   // ex: "Colaborador", "Equipamento"
+  entidadeId String?
+  detalhe    Json?
+  ip         String?
+  criadoEm   DateTime @default(now())
+
+  @@index([entidade, entidadeId])
+  @@index([usuarioId])
+  @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Colaboradores (tabela central)
+// ---------------------------------------------------------------------------
+
+enum StatusColaborador {
+  ATIVO
+  INATIVO
+  AFASTADO
+}
+
+enum StatusAtivoInativo {
+  ATIVO
+  INATIVO
+}
+
+model Colaborador {
+  id                String   @id @default(cuid())
+  nomeCompleto      String
+  // Opcional só para "contas de função" (ex: recepção de uma unidade, que
+  // roda entre pessoas diferentes e não tem titular fixo). Para qualquer
+  // colaborador de verdade, o CPF continua obrigatório via validação em
+  // src/routes/colaboradores.routes.ts (colaboradorInputSchema).
+  cpf               String?  @unique
+  // Marca um registro como conta de função em vez de pessoa física — ex:
+  // "Recepção Itaúna". Nome e responsável mudam com frequência; CPF não se
+  // aplica. Ver colaboradores.routes.ts para a regra de validação condicional.
+  contaFuncao       Boolean  @default(false)
+  email             String?  @unique
+  unidadeId         String?
+  unidade           Unidade? @relation(fields: [unidadeId], references: [id])
+  setorId           String?
+  setor             Setor?   @relation(fields: [setorId], references: [id])
+  cargoId           String?
+  cargo             Cargo?   @relation(fields: [cargoId], references: [id])
+  status            StatusColaborador @default(ATIVO)
+  dataAdmissao      DateTime?
+  dataDesligamento  DateTime?
+  dataNascimento    DateTime?
+  observacoes       String?
+  fotoUrl           String?
+  // Termo de responsabilidade digital assinado (recuperado 07/08/2026)
+  termoResponsabilidadeUrl          String?
+  termoResponsabilidadeNomeOriginal String?
+  termoResponsabilidadeTipo         String?
+  termoResponsabilidadeEnviadoEm    DateTime?
+  criadoEm          DateTime @default(now())
+  atualizadoEm      DateTime @updatedAt
+
+  usuario                Usuario?
+  // Múltiplos telefones (07/08/2026, pedido do Vini) — substitui o antigo
+  // campo único `telefone` (texto solto). Ver model TelefoneColaborador
+  // abaixo; a migração que introduziu isso preserva o valor antigo como o
+  // primeiro registro (principal=true) de cada colaborador que tinha
+  // telefone preenchido.
+  telefones              TelefoneColaborador[]
+  equipamentos           Equipamento[]
+  // Back-relation de Equipamento.ultimoColaboradorId (recuperado 07/08/2026)
+  equipamentosAnteriores Equipamento[]             @relation("UltimoColaboradorEquipamento")
+  linhas                 LinhaTelefonica[]
+  // Back-relation de LinhaTelefonica.ultimoColaboradorId (recuperado 07/08/2026)
+  linhasAnteriores       LinhaTelefonica[]         @relation("UltimoColaboradorLinha")
+  // Back-relation de AcessoCanalExtra.colaboradorId (recuperado 07/08/2026)
+  acessosCanalExtra      AcessoCanalExtra[]
+  acessos                AcessoSistema[]
+  solicitacoes           SolicitacaoEquipamento[] @relation("Solicitante")
+  chamados               ChamadoManutencao[]      @relation("SolicitanteChamado")
+  movimentacoes          MovimentacaoColaborador[]
+  historicoComoOrigem    HistoricoTroca[]          @relation("ColaboradorOrigem")
+  historicoComoDestino   HistoricoTroca[]          @relation("ColaboradorDestino")
+  // Relação recuperada junto com SolicitacaoServico (07/08/2026)
+  solicitacoesServico    SolicitacaoServico[]
+
+  @@index([status])
+  @@map("colaboradores")
+}
+
+// Múltiplos telefones por colaborador (07/08/2026, pedido do Vini) — antes
+// só existia um campo de texto solto (`Colaborador.telefone`, "telefone de
+// contato"). Continua sendo só o contato PESSOAL — não confundir com
+// LinhaTelefonica, que é o sistema de linhas CORPORATIVAS da empresa
+// (patrimônio próprio, com operadora/plano/status).
+enum TipoTelefoneColaborador {
+  CELULAR
+  RESIDENCIAL
+  COMERCIAL
+  WHATSAPP
+  OUTRO
+}
+
+model TelefoneColaborador {
+  id            String   @id @default(cuid())
+  colaboradorId String
+  colaborador   Colaborador @relation(fields: [colaboradorId], references: [id], onDelete: Cascade)
+  numero        String
+  tipo          TipoTelefoneColaborador @default(CELULAR)
+  // Um por colaborador, de verdade (índice único parcial verificado na
+  // aplicação — mesmo padrão de LinhaTelefonica.principal em
+  // linhas.routes.ts, ver desmarcarOutrasPrincipais lá). É o número usado
+  // como "telefone de contato" em qualquer lugar do sistema que precise de
+  // só UM número (ex: reconciliação de linha em linhas.routes.ts, PDF do
+  // termo de responsabilidade).
+  principal     Boolean  @default(false)
+  observacao    String?
+  criadoEm      DateTime @default(now())
+  atualizadoEm  DateTime @updatedAt
+
+  @@index([colaboradorId])
+  @@map("telefones_colaborador")
+}
+
+// ---------------------------------------------------------------------------
+// Equipamentos
+// ---------------------------------------------------------------------------
+
+enum EstadoConservacao {
+  NOVO
+  BOM
+  REGULAR
+  DANIFICADO
+}
+
+enum StatusEquipamento {
+  EM_USO
+  DISPONIVEL
+  EM_MANUTENCAO
+  BAIXADO
+  // Adicionados na Evolução Completa (07/2026) — situações que já
+  // aconteciam na prática (notebook com colaborador afastado, aparelho
+  // extraviado, descarte formal) mas não tinham status próprio antes.
+  EMPRESTADO
+  PERDIDO
+  DESCARTADO
+}
+
+model Equipamento {
+  id                String   @id @default(cuid())
+  tipo              String
+  marca             String?
+  modelo            String?
+  numeroSerie       String?  @unique
+  patrimonio        String?  @unique
+  estadoConservacao EstadoConservacao?
+  status            StatusEquipamento @default(DISPONIVEL)
+  colaboradorId     String?
+  colaborador       Colaborador? @relation(fields: [colaboradorId], references: [id])
+  dataEntrega       DateTime?
+  dataDevolucao     DateTime?
+  observacoes       String?
+  // Campos novos da Evolução Completa. categoriaId/marcaId referenciam as
+  // novas tabelas de domínio; tipo/marca (texto livre) continuam existindo
+  // e sendo aceitos, para não quebrar registros já cadastrados antes desta
+  // mudança — a UI passa a preencher categoriaId/marcaId quando disponíveis.
+  categoriaId       String?
+  categoria         CategoriaEquipamento? @relation(fields: [categoriaId], references: [id])
+  marcaId           String?
+  marcaEquipamento  MarcaEquipamento? @relation(fields: [marcaId], references: [id])
+  localizacao       String?
+  dataAquisicao     DateTime?
+  // Depreciação linear simples (recuperado 07/08/2026 a partir do uso real
+  // em equipamentos.routes.ts, função comDepreciacao) — Decimal pra valor
+  // monetário (nunca float), vidaUtilMeses em meses corridos (30,44
+  // dias/mês na conta). Ambos opcionais: sem eles, a rota não calcula
+  // valorAtual/depreciacaoAcumulada (retorna null nos dois).
+  valorAquisicao    Decimal? @db.Decimal(10, 2)
+  vidaUtilMeses     Int?
+  // Foto do equipamento (recuperado 07/08/2026 — ver Relatorio_Acessorios_Foto_Equipamento_17-07-2026.md)
+  fotoUrl           String?
+  fotoNomeOriginal  String?
+  fotoTipo          String?
+  fotoEnviadaEm     DateTime?
+  criadoEm          DateTime @default(now())
+  atualizadoEm      DateTime @updatedAt
+
+  // "De quem era" (recuperado 07/08/2026 — ver
+  // Relatorio_De_Quem_Era_Estoque_17-07-2026.md): salvo automaticamente
+  // quando o equipamento perde/troca de dono (colaboradorId muda pra outro
+  // valor ou null), guardando quem era o dono ANTERIOR — a UI só mostra esse
+  // campo quando o equipamento está sem dono atual (em estoque).
+  ultimoColaboradorId String?
+  ultimoColaborador   Colaborador? @relation("UltimoColaboradorEquipamento", fields: [ultimoColaboradorId], references: [id])
+
+  historico    HistoricoTroca[]
+  chamados     ChamadoManutencao[]
+  // Catálogo de acessórios vinculados e anexos/fotos (recuperado 07/08/2026)
+  acessorios   EquipamentoAcessorio[]
+  anexos       AnexoEquipamento[]
+
+  @@index([status])
+  @@index([colaboradorId])
+  @@index([categoriaId])
+  @@index([marcaId])
+  @@index([ultimoColaboradorId])
+  @@map("equipamentos")
+}
+
+// ---------------------------------------------------------------------------
+// Linhas telefônicas
+// ---------------------------------------------------------------------------
+
+enum StatusLinha {
+  ATIVA
+  DISPONIVEL
+  CANCELADA
+  BLOQUEADA
+}
+
+// Novo na Evolução Completa (07/2026). Default POS_PAGO porque todas as
+// linhas cadastradas até aqui são pós-pagas corporativas — o próprio Prisma
+// aplica esse default em toda linha já existente na migração, exatamente
+// como pedido: "todas as linhas já existentes classificadas como pós-pagas".
+enum TipoPlano {
+  POS_PAGO
+  PRE_PAGO
+}
+
+model LinhaTelefonica {
+  id                    String   @id @default(cuid())
+  numero                String   @unique
+  operadora             String?
+  plano                 String?
+  tipoPlano             TipoPlano @default(POS_PAGO)
+  empresaId             String?
+  empresa               Empresa? @relation(fields: [empresaId], references: [id])
+  colaboradorId         String?
+  colaborador           Colaborador? @relation(fields: [colaboradorId], references: [id])
+  // Campo de transição herdado da planilha original: nome digitado livremente
+  // quando a linha ainda não tinha vínculo formal com um colaborador cadastrado.
+  // Mantido só para permitir reconciliação manual; não deve ser usado como
+  // fonte de verdade quando colaboradorId estiver preenchido.
+  colaboradorInformado  String?
+  unidadeId             String?
+  unidade               Unidade? @relation(fields: [unidadeId], references: [id])
+  // Marca a linha "de contato" do colaborador quando ele tem mais de uma —
+  // usada pra escolher qual número exibir em listagens/relatórios resumidos
+  // (equipamentos.routes.ts busca a linha `principal: true` do colaborador).
+  // Recuperado 07/08/2026 a partir do uso real nas rotas.
+  principal             Boolean  @default(false)
+  // Conferência periódica da carteira de linhas (recuperado 07/08/2026 a
+  // partir do uso real na rota — valores confirmados em types.ts do
+  // frontend). NECESSITA_CONFERENCIA sinaliza pendência (ver
+  // Relatorio_Revisao_Semanal_20-07-2026.md); NAO_VERIFICADO é o estado
+  // inicial de toda linha nova.
+  situacaoConferencia   SituacaoConferenciaLinha @default(NAO_VERIFICADO)
+  // "De quem era" (mesmo padrão de Equipamento.ultimoColaboradorId,
+  // recuperado 07/08/2026) — guarda o dono anterior quando a linha
+  // perde/troca de colaborador.
+  ultimoColaboradorId   String?
+  ultimoColaborador     Colaborador? @relation("UltimoColaboradorLinha", fields: [ultimoColaboradorId], references: [id])
+  status                StatusLinha @default(ATIVA)
+  observacoes           String?
+  criadoEm              DateTime @default(now())
+  atualizadoEm          DateTime @updatedAt
+
+  @@index([status])
+  @@index([colaboradorId])
+  @@index([ultimoColaboradorId])
+  @@map("linhas_telefonicas")
+}
+
+enum SituacaoConferenciaLinha {
+  NAO_VERIFICADO
+  CONFERIDO
+  NECESSITA_CONFERENCIA
+}
+
+// ---------------------------------------------------------------------------
+// Acessos a sistemas
+// ---------------------------------------------------------------------------
+
+enum StatusAcesso {
+  ATIVO
+  BLOQUEADO
+  PENDENTE_CRIACAO
+  REVOGADO
+}
+
+model AcessoSistema {
+  id             String   @id @default(cuid())
+  colaboradorId  String
+  colaborador    Colaborador @relation(fields: [colaboradorId], references: [id], onDelete: Cascade)
+  sistemaId      String
+  sistema        SistemaAcesso @relation(fields: [sistemaId], references: [id])
+  status         StatusAcesso @default(ATIVO)
+  dataConcessao  DateTime?
+  dataRevogacao  DateTime?
+  observacoes    String?
+
+  @@unique([colaboradorId, sistemaId])
+  @@map("acessos_sistema")
+}
+
+// ---------------------------------------------------------------------------
+// Lotes de rateio e solicitações de equipamento
+// ---------------------------------------------------------------------------
+
+enum StatusLote {
+  ABERTO
+  FECHADO
+}
+
+model LoteRateio {
+  id             String   @id @default(cuid())
+  nome           String
+  descricao      String?
+  dataInicio     DateTime?
+  dataFechamento DateTime?
+  status         StatusLote @default(ABERTO)
+
+  solicitacoes SolicitacaoEquipamento[]
+
+  @@map("lotes_rateio")
+}
+
+enum Prioridade {
+  ALTA
+  MEDIA
+  BAIXA
+}
+
+enum StatusSolicitacao {
+  PENDENTE
+  EM_ANALISE
+  APROVADO
+  EM_COMPRA
+  COMPRADO
+  ENTREGUE
+  CANCELADO
+  REPROVADO
+}
+
+model SolicitacaoEquipamento {
+  id              String   @id @default(cuid())
+  solicitanteId   String
+  solicitante     Colaborador @relation("Solicitante", fields: [solicitanteId], references: [id])
+  // FK obrigatória (ON DELETE RESTRICT — Postgres bloqueia excluir a unidade
+  // enquanto houver solicitação vinculada). Recuperado 07/08/2026 a partir do
+  // uso real em dominios.routes.ts (verificarUso da rota de Unidades).
+  unidadeId       String
+  unidade         Unidade  @relation(fields: [unidadeId], references: [id])
+  item            String
+  justificativa   String?
+  prioridade      Prioridade @default(MEDIA)
+  loteId          String?
+  lote            LoteRateio? @relation(fields: [loteId], references: [id])
+  quantidade      Int      @default(1)
+  // Decimal para valores monetários — nunca usar float aqui, evita erro de
+  // arredondamento acumulado em somas/relatórios financeiros.
+  valorUnitario   Decimal  @db.Decimal(10, 2) @default(0)
+  aprovadorId     String?
+  aprovador       Usuario? @relation("Aprovador", fields: [aprovadorId], references: [id])
+  // Referência ao catálogo (recuperado 07/08/2026 a partir do uso real em
+  // dominios.routes.ts) — ON DELETE SET NULL: excluir o produto do catálogo
+  // não apaga a solicitação já feita, só solta o vínculo (o texto em `item`
+  // continua servindo de snapshot legível).
+  produtoId       String?
+  produto         ProdutoEquipamento? @relation(fields: [produtoId], references: [id], onDelete: SetNull)
+  // Categoria "congelada" no momento da solicitação, preenchida a partir do
+  // produto (se veio do catálogo) ou escolhida manualmente — mesmo racional
+  // de snapshot de ItemSolicitacaoPapelaria.categoriaId. Recuperado
+  // 07/08/2026 a partir do uso real em solicitacoes.routes.ts.
+  categoriaId     String?
+  categoria       CategoriaProdutoEquipamento? @relation(fields: [categoriaId], references: [id])
+  // Técnico responsável pela validação (obrigatório desde 09/07/2026,
+  // "Ajuste na Estrutura" — pedido do Vini) — distinto de `aprovador`
+  // (Financeiro/Administrador decide o custo; o técnico valida a
+  // necessidade/viabilidade antes). Recuperado 07/08/2026.
+  tecnicoResponsavelId String
+  tecnicoResponsavel   Usuario @relation("TecnicoResponsavelSolicitacao", fields: [tecnicoResponsavelId], references: [id])
+  // Valor e fornecedor da compra (17/07/2026, pedido do Vini) — preenchidos
+  // depois da aprovação, não na criação. Recuperado 07/08/2026.
+  fornecedor      String?
+  status          StatusSolicitacao @default(PENDENTE)
+  dataSolicitacao DateTime @default(now())
+  dataPrevista    DateTime?
+  dataEntrega     DateTime?
+  observacoes     String?
+  criadoEm        DateTime @default(now())
+  atualizadoEm    DateTime @updatedAt
+
+  @@index([status])
+  @@index([loteId])
+  @@map("solicitacoes_equipamento")
+}
+
+// ---------------------------------------------------------------------------
+// Chamados de manutenção / suporte técnico
+// ---------------------------------------------------------------------------
+
+// Categorias reescritas na Evolução Completa Fase 2 (07/2026) pro conjunto
+// pedido pelo Vini. Mapeamento das antigas nos 2 chamados que já existiam em
+// produção no momento da migração (ver migration.sql): COMPUTADOR->HARDWARE,
+// INTERNET->REDE, TELEFONE->TELEFONIA, SISTEMA/EMAIL->SOFTWARE, ACESSO->
+// ACESSOS, MANUTENCAO_EQUIPAMENTO->MANUTENCAO, TROCA_EQUIPAMENTO->
+// SOLICITACAO_EQUIPAMENTO, OUTROS->OUTROS.
+enum CategoriaChamado {
+  MANUTENCAO
+  SOLICITACAO_EQUIPAMENTO
+  SOFTWARE
+  HARDWARE
+  REDE
+  TELEFONIA
+  IMPRESSORA
+  ACESSOS
+  OUTROS
+  IMOVIEW_CRM
+}
+
+// Recuperado 07/08/2026 (valor real, achado no histórico da sessão).
+enum TipoSolicitacaoImoview {
+  ERRO_BUG
+  DUVIDA
+  LENTIDAO
+  SOLICITACAO_ACESSO
+  SOLICITACAO_MELHORIA
+  PROBLEMA_IMOVEL
+  OUTRO
+}
+
+// Status reescritos na Fase 2. Mapeamento dos 2 chamados que já existiam:
+// AGUARDANDO_PECA fica igual; CONCLUIDO->RESOLVIDO (preserva a possibilidade
+// de ainda virar ENCERRADO depois, em vez de já fechar de vez na migração).
+// EM_ORCAMENTO->EM_ANALISE, ENVIADO_FORNECEDOR->EM_ANDAMENTO,
+// CANCELADO/SEM_SOLUCAO->ENCERRADO (nenhum desses 4 tinha registro em
+// produção no momento da migração).
+enum StatusChamado {
+  ABERTO
+  EM_ANALISE
+  EM_ANDAMENTO
+  AGUARDANDO_COLABORADOR
+  AGUARDANDO_PECA
+  RESOLVIDO
+  ENCERRADO
+}
+
+// Linha do tempo de um chamado — cobre "histórico completo" e "conversar com
+// suporte" pedidos na Evolução Completa num único modelo: cada mudança de
+// status/atribuição vira um evento de sistema, cada mensagem de chat vira um
+// evento tipo MENSAGEM, tudo ordenado por criadoEm. anexoUrl já existe pronto
+// pra quando a decisão de onde guardar arquivo (Cloudflare R2 x volume x
+// base64) for tomada — não vai exigir migração nova, só ligar o upload.
+//
+// Decisão tomada em 06/07/2026: Railway Volume (disco persistente anexado ao
+// próprio serviço backend, montado em /data/anexos via ANEXOS_DIR). Motivo:
+// zero conta de terceiro pra criar, fica automaticamente privado (o arquivo
+// só é servido através da API já autenticada, sem precisar de URL assinada)
+// e o volume já cabe décadas de fotos de chamado no ritmo atual. Cloudflare
+// R2 fica como caminho de evolução se o volume crescer muito ou precisar de
+// CDN (ver Plano_Evolucao_Sistema_Corporativo.md no projeto Claude).
+// ANEXO usa exatamente os campos que já existiam: anexoUrl guarda o caminho
+// relativo dentro do volume, detalhe guarda { nomeArquivoOriginal, mimeType,
+// tamanhoBytes } — ver rotas em chamados.routes.ts.
+enum TipoEventoChamado {
+  ABERTURA
+  MENSAGEM
+  MUDANCA_STATUS
+  ATRIBUICAO
+  ATUALIZACAO
+  ANEXO
+  // Recuperados 07/08/2026 a partir do uso real em chamados.routes.ts
+  REABERTURA
+  AVALIACAO
+}
+
+model ChamadoEvento {
+  id        String   @id @default(cuid())
+  chamadoId String
+  chamado   ChamadoManutencao @relation(fields: [chamadoId], references: [id], onDelete: Cascade)
+  tipo      TipoEventoChamado
+  autorId   String?
+  autor     Usuario? @relation("AutorEventoChamado", fields: [autorId], references: [id])
+  mensagem  String?
+  detalhe   Json?
+  anexoUrl  String?
+  criadoEm  DateTime @default(now())
+
+  @@index([chamadoId])
+  @@map("chamado_eventos")
+}
+
+model ChamadoManutencao {
+  id                String   @id @default(cuid())
+  // Número sequencial visível pro usuário (ex: "Chamado #47") — id (cuid)
+  // continua sendo a chave primária real, numero é só pra exibição/busca
+  // humana, pedido explicitamente na Evolução Completa.
+  numero            Int      @unique @default(autoincrement())
+  solicitanteId     String
+  solicitante       Colaborador @relation("SolicitanteChamado", fields: [solicitanteId], references: [id])
+  categoria         CategoriaChamado
+  equipamentoId     String?
+  equipamento       Equipamento? @relation(fields: [equipamentoId], references: [id])
+  descricao         String
+  // Local físico do problema (ex: "Sala TI", "Recepção Itaúna") — distinto da
+  // localização do equipamento em si, porque nem todo chamado tem um
+  // equipamento vinculado (ex: "sem internet na sala X").
+  local             String?
+  // Unidade obrigatória (07/07/2026, pedido do Vini — recuperado 07/08/2026)
+  unidadeId         String
+  unidade           Unidade  @relation(fields: [unidadeId], references: [id])
+  // Integração Imoview (recuperado 07/08/2026, ver TipoSolicitacaoImoview)
+  tipoSolicitacaoImoview TipoSolicitacaoImoview?
+  codigoImovel      String?
+  // Quantas vezes o chamado foi reaberto depois de ter sido marcado como
+  // resolvido/encerrado — usado no painel de qualidade de atendimento.
+  reaberturas       Int @default(0)
+  prioridade        Prioridade @default(MEDIA)
+  responsavelId     String?
+  responsavel       Usuario? @relation("Responsavel", fields: [responsavelId], references: [id])
+  fornecedorExterno String?
+  status            StatusChamado @default(ABERTO)
+  slaPrazo          DateTime?
+  valorPrevisto     Decimal? @db.Decimal(10, 2)
+  valorFinal        Decimal? @db.Decimal(10, 2)
+  dataAbertura      DateTime @default(now())
+  dataConclusao     DateTime?
+  observacoes       String?
+  // Visível só pra quem administra o chamado (Administrador/Suporte TI) —
+  // nunca aparece pro colaborador que abriu o chamado. Filtrado na camada de
+  // API (ver chamados.routes.ts), não só escondido na tela.
+  observacoesInternas String?
+  // Visível pro colaborador — é a explicação do que foi feito, diferente das
+  // observações internas acima.
+  solucaoAplicada   String?
+  // Avaliação do atendimento pelo solicitante, só depois do chamado terminal
+  // (ver STATUS_TERMINAIS em chamados.routes.ts) — recuperado 07/08/2026.
+  avaliacaoNota       Int?
+  avaliacaoComentario String?
+  avaliadoEm          DateTime?
+  criadoEm          DateTime @default(now())
+  atualizadoEm      DateTime @updatedAt
+
+  eventos ChamadoEvento[]
+
+  @@index([status])
+  @@map("chamados_manutencao")
+}
+
+// ---------------------------------------------------------------------------
+// Movimentações de colaboradores
+// ---------------------------------------------------------------------------
+
+enum TipoMovimentacao {
+  ADMISSAO
+  DESLIGAMENTO
+  TRANSFERENCIA_UNIDADE
+  TRANSFERENCIA_SETOR
+  PROMOCAO
+}
+
+enum StatusImpacto {
+  NAO_SE_APLICA
+  PENDENTE_REVISAO
+  REVISADO
+}
+
+enum StatusMovimentacao {
+  PENDENTE
+  CONCLUIDA
+}
+
+model MovimentacaoColaborador {
+  id                  String   @id @default(cuid())
+  colaboradorId       String
+  colaborador         Colaborador @relation(fields: [colaboradorId], references: [id])
+  tipo                TipoMovimentacao
+  data                DateTime @default(now())
+  unidadeAnteriorId   String?
+  unidadeAnterior     Unidade? @relation("UnidadeAnterior", fields: [unidadeAnteriorId], references: [id])
+  setorAnteriorId     String?
+  setorAnterior       Setor?   @relation("SetorAnterior", fields: [setorAnteriorId], references: [id])
+  novaUnidadeId       String?
+  novaUnidade         Unidade? @relation("NovaUnidade", fields: [novaUnidadeId], references: [id])
+  novoSetorId         String?
+  novoSetor           Setor?   @relation("NovoSetor", fields: [novoSetorId], references: [id])
+  impactoAcessos      StatusImpacto @default(NAO_SE_APLICA)
+  impactoLinhas       StatusImpacto @default(NAO_SE_APLICA)
+  impactoEquipamentos StatusImpacto @default(NAO_SE_APLICA)
+  status              StatusMovimentacao @default(PENDENTE)
+  responsavelId       String?
+  responsavel         Usuario? @relation("ResponsavelMovimentacao", fields: [responsavelId], references: [id])
+  observacoes         String?
+  criadoEm            DateTime @default(now())
+
+  @@index([colaboradorId])
+  @@map("movimentacoes_colaboradores")
+}
+
+// ---------------------------------------------------------------------------
+// Histórico de trocas de equipamento
+// ---------------------------------------------------------------------------
+
+enum TipoEventoHistorico {
+  ENTREGA
+  TROCA
+  DEVOLUCAO
+  MANUTENCAO
+  BAIXA
+}
+
+enum StatusHistorico {
+  CONCLUIDO
+  PENDENTE
+}
+
+model HistoricoTroca {
+  id                     String   @id @default(cuid())
+  data                   DateTime @default(now())
+  equipamentoId          String
+  equipamento            Equipamento @relation(fields: [equipamentoId], references: [id])
+  tipoEvento             TipoEventoHistorico
+  colaboradorOrigemId    String?
+  colaboradorOrigem      Colaborador? @relation("ColaboradorOrigem", fields: [colaboradorOrigemId], references: [id])
+  colaboradorDestinoId   String?
+  colaboradorDestino     Colaborador? @relation("ColaboradorDestino", fields: [colaboradorDestinoId], references: [id])
+  responsavelRegistroId  String?
+  responsavelRegistro    Usuario? @relation("ResponsavelHistorico", fields: [responsavelRegistroId], references: [id])
+  status                 StatusHistorico @default(CONCLUIDO)
+  observacoes            String?
+
+  @@index([equipamentoId])
+  @@map("historico_trocas")
+}
+
+
+// ==== Modelos recuperados separadamente (versões mais novas do schema, 07/08/2026) ====
+
+model Mensagem {
+  id                String       @id @default(cuid())
+  tipo              TipoMensagem
+  remetenteId       String
+  remetente         Usuario      @relation("MensagensEnviadas", fields: [remetenteId], references: [id])
+  destinatarioId    String?
+  destinatario      Usuario?     @relation("MensagensRecebidas", fields: [destinatarioId], references: [id])
+  unidadeId         String?
+  unidade           Unidade?     @relation(fields: [unidadeId], references: [id])
+  setorId           String?
+  setor             Setor?       @relation(fields: [setorId], references: [id])
+  conteudo          String
+  // Anexo de imagem/vídeo na mensagem (08/07/2026, pedido do Vini). Mesma
+  // infra de arquivo dos outros anexos do sistema (ANEXOS_DIR/Railway
+  // Volume, ver src/utils/anexos.ts) — pasta própria "mensagens" (ver
+  // MENSAGENS_PASTA_ANEXO em mensagens.routes.ts). Mensagem pode ter só
+  // texto, só anexo, ou os dois — nunca nenhum dos dois (validado na rota).
+  anexoUrl          String?
+  anexoNomeOriginal String?
+  anexoTipo         String? // mimetype (image/... ou video/...) — front usa o prefixo pra escolher <img> ou <video>
+  anexoTamanhoBytes Int?
+  // Só usado em mensagem DIRETA — marcada quando o destinatário abre a
+  // conversa (ver PATCH /mensagens/direta/:usuarioId/lida).
+  lidaEm            DateTime?
+  criadoEm          DateTime     @default(now())
+
+  @@index([remetenteId, destinatarioId])
+  @@index([destinatarioId, remetenteId])
+  @@index([unidadeId, criadoEm])
+  @@index([setorId, criadoEm])
+  @@map("mensagens")
+}
+
+model SolicitacaoServico {
+  id                 String                   @id @default(cuid())
+  numero             Int                      @unique @default(autoincrement())
+  solicitanteId      String
+  solicitante        Colaborador              @relation(fields: [solicitanteId], references: [id])
+  servico            String
+  descricao          String?
+  unidadeId          String?
+  unidade            Unidade?                 @relation(fields: [unidadeId], references: [id])
+  status             StatusSolicitacaoServico @default(ABERTA)
+  // Preenchidos pelo Suporte TI ao encaminhar pra contratação:
+  precisaContratacao Boolean                  @default(false)
+  fornecedor         String?
+  valorEstimado      Decimal?                 @db.Decimal(10, 2)
+  criadoEm           DateTime                 @default(now())
+  atualizadoEm       DateTime                 @updatedAt
+
+  eventos SolicitacaoServicoEvento[]
+
+  @@index([status])
+  @@index([solicitanteId])
+  @@map("solicitacoes_servico")
+}
+
+model Notificacao {
+  id              String               @id @default(cuid())
+  destinatarioId  String
+  destinatario    Usuario              @relation("DestinatarioNotificacao", fields: [destinatarioId], references: [id], onDelete: Cascade)
+  // Quem/o que originou — null quando é um aviso do próprio sistema (ex:
+  // SISTEMA_AVISO) sem um usuário específico por trás.
+  origemUsuarioId String?
+  origemUsuario   Usuario?             @relation("OrigemNotificacao", fields: [origemUsuarioId], references: [id], onDelete: SetNull)
+  categoria       CategoriaNotificacao
+  tipo            TipoNotificacao
+  titulo          String
+  mensagem        String
+  prioridade      Prioridade           @default(MEDIA)
+  // Snapshot do link de destino (ex: entidade "ChamadoManutencao", entidadeId
+  // do chamado) — usado pelo frontend pra navegar direto ao clicar; ambos
+  // opcionais porque SISTEMA_AVISO não aponta pra nenhum registro.
+  entidade        String?
+  entidadeId      String?
+  lida            Boolean              @default(false)
+  lidaEm          DateTime?
+  criadoEm        DateTime             @default(now())
+
+  // destinatarioId+lida: contagem de não-lidas (consulta mais frequente,
+  // roda a cada conexão SSE aberta/reconectada). destinatarioId+criadoEm:
+  // listagem paginada mais recente primeiro.
+  @@index([destinatarioId, lida])
+  @@index([destinatarioId, criadoEm])
+  @@index([categoria])
+  @@map("notificacoes")
+}
+
+
+// ==== Enums/modelos adicionais recuperados (07/08/2026) ====
+
+model SolicitacaoServicoEvento {
+  id            String             @id @default(cuid())
+  solicitacaoId String
+  solicitacao   SolicitacaoServico @relation(fields: [solicitacaoId], references: [id], onDelete: Cascade)
+  autorId       String?
+  autor         Usuario?           @relation("AutorEventoSolicitacaoServico", fields: [autorId], references: [id])
+  mensagem      String
+  criadoEm      DateTime           @default(now())
+
+  @@index([solicitacaoId])
+  @@map("solicitacoes_servico_eventos")
+}
+
+enum CategoriaNotificacao {
+  CHAMADO
+  SOLICITACAO_EQUIPAMENTO
+  SOLICITACAO_PAPELARIA
+  PATRIMONIO
+  LINHA_TELEFONICA
+  USUARIO
+  MENSAGEM
+  SISTEMA
+}
+
+enum TipoNotificacao {
+  CHAMADO_ABERTO
+  CHAMADO_ATRIBUIDO
+  CHAMADO_STATUS_MUDOU
+  CHAMADO_MENSAGEM_NOVA
+  CHAMADO_RESOLVIDO
+  CHAMADO_PRIORIDADE_ALTA
+  // Fase 2 — Melhorias Estruturais (09/07/2026).
+  CHAMADO_REABERTO
+  CHAMADO_AVALIACAO_BAIXA
+  SOLICITACAO_EQUIPAMENTO_NOVA
+  SOLICITACAO_EQUIPAMENTO_APROVADA
+  SOLICITACAO_EQUIPAMENTO_REPROVADA
+  SOLICITACAO_EQUIPAMENTO_STATUS_MUDOU
+  PAPELARIA_NOVA
+  PAPELARIA_ENVIADA
+  PAPELARIA_APROVADA
+  PAPELARIA_REPROVADA
+  PAPELARIA_STATUS_MUDOU
+  PAPELARIA_COMENTARIO
+  PAPELARIA_URGENTE_ABERTA
+  PATRIMONIO_EQUIPAMENTO_ATRIBUIDO
+  PATRIMONIO_EQUIPAMENTO_DEVOLVIDO
+  PATRIMONIO_EQUIPAMENTO_MANUTENCAO
+  PATRIMONIO_EQUIPAMENTO_BAIXADO
+  LINHA_VINCULADA
+  LINHA_NECESSITA_CONFERENCIA
+  USUARIO_CONTA_CRIADA
+  USUARIO_PAPEL_ALTERADO
+  USUARIO_SENHA_REDEFINIDA_ADMIN
+  MOVIMENTACAO_REGISTRADA
+  TERMO_RESPONSABILIDADE_PENDENTE
+  MENSAGEM_DIRETA_NOVA
+  // "Recentes" unificado (09/07/2026, pedido do Vini) — mensagem de canal
+  // (unidade OU setor) passa a notificar quem tem acesso ao canal, mesmo
+  // padrão de MENSAGEM_DIRETA_NOVA. Um tipo só pros dois (em vez de
+  // CANAL_UNIDADE_NOVA/CANAL_SETOR_NOVA separados) porque o destino já é
+  // resolvido por Notificacao.entidade ("CanalUnidade"/"CanalSetor") — não
+  // precisa de um TipoNotificacao por subtipo só pra isso.
+  MENSAGEM_CANAL_NOVA
+  // Fase 2 da Central de Comunicação (21/07/2026, pedido do Vini: "menções"
+  // e "resposta em thread") — MENSAGEM_MENCAO dispara mesmo se o
+  // destinatário tiver o canal inteiro silenciado via
+  // PreferenciaNotificacaoCanal em modo MENCOES (ver src/utils/
+  // canaisMensagem.ts); MENSAGEM_RESPOSTA_THREAD avisa o autor da mensagem-
+  // pai e quem mais já respondeu na mesma thread. Reação em emoji
+  // deliberadamente NÃO gera notificação — é sinal ambiente, não evento que
+  // precise de push (mesma decisão de outros apps de chat).
+  MENSAGEM_MENCAO
+  MENSAGEM_RESPOSTA_THREAD
+  SISTEMA_AVISO
+  // Financeiro (22/07/2026, pedido do Vini: fluxo de estorno de pagamento).
+  FINANCEIRO_PAGAMENTO_ESTORNADO
+}
+
+
+// ==== Enums adicionais (07/08/2026) ====
+
+enum TipoMensagem {
+  DIRETA
+  CANAL_UNIDADE
+  CANAL_SETOR
+}
+
+enum StatusSolicitacaoServico {
+  ABERTA
+  EM_ATENDIMENTO
+  AGUARDANDO_CONTRATACAO
+  CONCLUIDA
+  RECUSADA
+}
+
+// Recuperado 07/08/2026 (valores confirmados no frontend, src/types.ts).
+enum UnidadeMedidaProduto {
+  UNIDADE
+  PACOTE
+  CAIXA
+  RESMA
+  FRASCO
+  ROLO
+  PAR
+  KIT
+  GALAO
+  OUTRO
+}
+
+
+// ==== Pagamentos - parcial, recuperado 07/08/2026 (falta PagamentoColaborador em si) ====
+
+// ATENÇÃO (recuperação 07/08/2026): o módulo de Pagamentos/CNAB240 não pôde
+// ser recuperado por completo — faltam os models PagamentoColaborador,
+// RemessaCnab, DadosBancariosColaborador/ConfiguracaoPagamento e o enum
+// StatusFolhaPagamento (não encontrados em nenhuma transcrição desta sessão).
+// FolhaPagamento abaixo fica comentado até esses modelos serem reconstruídos
+// — sem isso o schema não valida. Ver Recuperacao_Codigo_Fonte_07-08-2026.md.
+// model FolhaPagamento {
+//   id            String                   @id @default(cuid())
+//   numero        Int                      @unique @default(autoincrement())
+//   competencia   String
+//   descricao     String?
+//   tipo          TipoPagamentoColaborador @default(SALARIO)
+//   dataPagamento DateTime?
+//   status        StatusFolhaPagamento     @default(ABERTA)
+//   criadoPorId   String?
+//   criadoPor     Usuario?                 @relation("CriadorFolhaPagamento", fields: [criadoPorId], references: [id])
+//   criadoEm      DateTime                 @default(now())
+//   atualizadoEm  DateTime                 @updatedAt
+//
+//   pagamentos PagamentoColaborador[]
+//   remessas   RemessaCnab[]
+//
+//   @@index([status])
+//   @@map("folhas_pagamento")
+// }
+
+enum StatusPagamentoColaborador {
+  PENDENTE
+  EM_REMESSA
+  PAGO
+  REJEITADO
+  CANCELADO
+  // Estorno (22/07/2026, pedido do Vini: "muitas vezes o pagamento via Pix,
+  // TED, etc é estornado e dias depois o financeiro descobre") — diferente
+  // de REJEITADO (que é o banco recusando a remessa ANTES de pagar, via
+  // retorno CNAB) e de CANCELADO (decisão interna de não pagar). ESTORNADO é
+  // dinheiro que JÁ estava pago (`PAGO`) e voltou depois — só alcançável a
+  // partir de PAGO, nunca o status inicial de um lançamento.
+  ESTORNADO
+}
+
+enum TipoPagamentoColaborador {
+  SALARIO
+  ADIANTAMENTO
+  FERIAS
+  RESCISAO
+  COMISSAO
+  BONIFICACAO
+  OUTROS
+}
+
+// ==== Papelaria (recuperado 07/08/2026 via mineração de transcrições) ====
+
+enum TipoSolicitacaoPapelaria {
+  MENSAL
+  AVULSA
+}
+
+enum StatusSolicitacaoPapelaria {
+  RASCUNHO
+  ENVIADA
+  EM_ANALISE
+  APROVADA
+  EM_SEPARACAO
+  EM_TRANSPORTE
+  ENTREGUE
+  CANCELADA
+  REPROVADA
+}
+
+enum TipoEventoSolicitacaoPapelaria {
+  CRIACAO
+  EDICAO
+  MUDANCA_STATUS
+  COMENTARIO
+}
+
+model CategoriaProdutoPapelaria {
+  id     String             @id @default(cuid())
+  nome   String             @unique
+  status StatusAtivoInativo @default(ATIVO)
+
+  produtos ProdutoPapelaria[]
+  itens    ItemSolicitacaoPapelaria[]
+
+  @@map("categorias_produto_papelaria")
+}
+
+model ProdutoPapelaria {
+  id                  String                    @id @default(cuid())
+  nome                String                    @unique
+  categoriaId         String
+  categoria           CategoriaProdutoPapelaria @relation(fields: [categoriaId], references: [id])
+  unidadeMedidaPadrao UnidadeMedidaProduto      @default(UNIDADE)
+  status              StatusAtivoInativo        @default(ATIVO)
+  criadoEm            DateTime                  @default(now())
+  atualizadoEm        DateTime                  @updatedAt
+
+  itens ItemSolicitacaoPapelaria[]
+
+  @@index([categoriaId])
+  @@map("produtos_papelaria")
+}
+
+model SolicitacaoPapelaria {
+  id     String @id @default(cuid())
+  // Número sequencial visível ("Remessa #12") — mesmo padrão de
+  // ChamadoManutencao.numero (cuid continua sendo a chave primária real).
+  numero Int    @unique @default(autoincrement())
+
+  tipo TipoSolicitacaoPapelaria
+
+  unidadeId String
+  unidade   Unidade @relation(fields: [unidadeId], references: [id])
+
+  // "Responsável pela solicitação" do pedido original — preenchido com o
+  // usuário logado no momento da criação; só ADMINISTRADOR/GESTOR_COORDENADOR
+  // podem escolher outra pessoa (checado na rota, não no schema).
+  responsavelId String
+  responsavel   Usuario @relation("ResponsavelSolicitacaoPapelaria", fields: [responsavelId], references: [id])
+
+  aprovadorId String?
+  aprovador   Usuario? @relation("AprovadorSolicitacaoPapelaria", fields: [aprovadorId], references: [id])
+
+  // "Quem de fato enviou" — normalmente igual a responsavelId, mas difere
+  // quando um ADMINISTRADOR/GESTOR_COORDENADOR cria a solicitação "em nome
+  // de" outra pessoa (responsavelId = a pessoa delegada, criadoPorId =
+  // usuário logado que efetivamente enviou). Campo recuperado 07/08/2026 a
+  // partir do uso real em solicitacoesPapelaria.routes.ts (não estava no
+  // dump original do model encontrado nas transcrições).
+  criadoPorId String?
+  criadoPor   Usuario? @relation("CriadorSolicitacaoPapelaria", fields: [criadoPorId], references: [id])
+
+  status          StatusSolicitacaoPapelaria @default(RASCUNHO)
+  prioridade      Prioridade                 @default(MEDIA)
+  // Obrigatória para AVULSA (checado na rota) — dispensável para MENSAL, que
+  // já é periódica e previsível por natureza.
+  justificativa   String?
+  observacoes     String?
+  dataSolicitacao DateTime                   @default(now())
+  dataConclusao   DateTime?
+  criadoEm        DateTime                   @default(now())
+  atualizadoEm    DateTime                   @updatedAt
+
+  itens   ItemSolicitacaoPapelaria[]
+  eventos EventoSolicitacaoPapelaria[]
+
+  @@index([status])
+  @@index([unidadeId])
+  @@index([responsavelId])
+  @@index([tipo])
+  @@index([prioridade])
+  @@map("solicitacoes_papelaria")
+}
+
+model ItemSolicitacaoPapelaria {
+  id            String               @id @default(cuid())
+  solicitacaoId String
+  solicitacao   SolicitacaoPapelaria @relation(fields: [solicitacaoId], references: [id], onDelete: Cascade)
+
+  // Referência ao catálogo quando o item veio de lá (o caminho recomendado);
+  // fica null para item avulso. `nomeProduto` é sempre preenchido como uma
+  // cópia (snapshot) do nome no momento da solicitação — garante que o
+  // histórico continua legível mesmo se o produto for renomeado ou removido
+  // do catálogo depois (onDelete: SetNull preserva o item, só solta o vínculo).
+  produtoId   String?
+  produto     ProdutoPapelaria? @relation(fields: [produtoId], references: [id], onDelete: SetNull)
+  nomeProduto String
+
+  // Sempre preenchida (vem do produto do catálogo quando produtoId existe,
+  // ou escolhida manualmente para item avulso) — mantém os indicadores "por
+  // categoria" do dashboard consistentes independentemente da origem do item.
+  categoriaId String
+  categoria   CategoriaProdutoPapelaria @relation(fields: [categoriaId], references: [id])
+
+  quantidade    Int                  @default(1)
+  unidadeMedida UnidadeMedidaProduto @default(UNIDADE)
+  observacoes   String?
+  criadoEm      DateTime             @default(now())
+
+  @@index([solicitacaoId])
+  @@index([produtoId])
+  @@map("itens_solicitacao_papelaria")
+}
+
+model EventoSolicitacaoPapelaria {
+  id            String               @id @default(cuid())
+  solicitacaoId String
+  solicitacao   SolicitacaoPapelaria @relation(fields: [solicitacaoId], references: [id], onDelete: Cascade)
+
+  tipo    TipoEventoSolicitacaoPapelaria
+  autorId String?
+  autor   Usuario?                       @relation("AutorEventoSolicitacaoPapelaria", fields: [autorId], references: [id])
+
+  mensagem String?
+  detalhe  Json?
+  criadoEm DateTime @default(now())
+
+  @@index([solicitacaoId])
+  @@map("eventos_solicitacao_papelaria")
+}
+
+// ==== Catálogo de acessórios/anexos de Equipamento (recuperado 07/08/2026) ====
+model CategoriaProdutoEquipamento {
+  id     String             @id @default(cuid())
+  nome   String             @unique
+  status StatusAtivoInativo @default(ATIVO)
+
+  produtos     ProdutoEquipamento[]
+  // Back-relation de SolicitacaoEquipamento.categoriaId (recuperado 07/08/2026)
+  solicitacoes SolicitacaoEquipamento[]
+
+  @@map("categorias_produto_equipamento")
+}
+
+// Reconstruído 07/08/2026 a partir do uso real em dominios.routes.ts (rotas
+// /produtos-equipamento) — o bloco original do model não foi encontrado nas
+// transcrições, mas o schema de entrada/saída da rota (nome único,
+// categoriaId obrigatório, status opcional no PATCH) deixa os campos
+// inequívocos. SolicitacaoEquipamento.produtoId referencia este model
+// (ON DELETE SET NULL — ver comentário em SolicitacaoEquipamento).
+model ProdutoEquipamento {
+  id          String                      @id @default(cuid())
+  nome        String                      @unique
+  categoriaId String
+  categoria   CategoriaProdutoEquipamento @relation(fields: [categoriaId], references: [id])
+  status      StatusAtivoInativo          @default(ATIVO)
+  criadoEm    DateTime                    @default(now())
+  atualizadoEm DateTime                   @updatedAt
+
+  solicitacoes SolicitacaoEquipamento[]
+
+  @@index([categoriaId])
+  @@map("produtos_equipamento")
+}
+
+model AcessorioEquipamento {
+  id          String               @id @default(cuid())
+  nome        String
+  categoriaId String
+  categoria   CategoriaEquipamento @relation(fields: [categoriaId], references: [id])
+  status      StatusAtivoInativo   @default(ATIVO)
+  criadoEm    DateTime             @default(now())
+
+  equipamentos EquipamentoAcessorio[]
+
+  @@unique([nome, categoriaId])
+  @@index([categoriaId])
+  @@map("acessorios_equipamento")
+}
+
+model EquipamentoAcessorio {
+  id            String               @id @default(cuid())
+  equipamentoId String
+  equipamento   Equipamento          @relation(fields: [equipamentoId], references: [id], onDelete: Cascade)
+  acessorioId   String
+  acessorio     AcessorioEquipamento @relation(fields: [acessorioId], references: [id])
+  criadoEm      DateTime             @default(now())
+
+  @@unique([equipamentoId, acessorioId])
+  @@index([equipamentoId])
+  @@index([acessorioId])
+  @@map("equipamento_acessorios")
+}
+
+model AnexoEquipamento {
+  id            String      @id @default(cuid())
+  equipamentoId String
+  equipamento   Equipamento @relation(fields: [equipamentoId], references: [id], onDelete: Cascade)
+  url           String
+  // Nome GENÉRICO gerado pelo servidor ("foto-equipamento.jpg" etc.), NÃO o
+  // nome original do upload — pedido do Vini (17/07/2026): "não pegue o nome
+  // original do arquivo, apenas o tamanho e a data". Nome de arquivo de
+  // celular vaza informação (data/hora/app de origem) e polui a tela; aqui o
+  // campo existe só pra dar um nome válido ao download (Content-Disposition)
+  // e carregar a extensão certa.
+  nomeOriginal  String
+  tipo          String
+  tamanhoBytes  Int
+  // Posição na lista (17/07/2026, pedido do Vini: "que eu consiga arrastar e
+  // reorganizar") — 0-based, reescrita em bloco pela rota PATCH
+  // /equipamentos/:id/anexos/ordem a cada arrasto. Novo upload entra no fim
+  // (max(ordem)+1).
+  ordem         Int         @default(0)
+  enviadoPorId  String?
+  enviadoPor    Usuario?    @relation(fields: [enviadoPorId], references: [id])
+  criadoEm      DateTime    @default(now())
+
+  @@index([equipamentoId])
+  @@map("anexos_equipamento")
+}
+
+
+// ==== Preferências e canais extras (recuperado 07/08/2026) ====
+model PreferenciaNotificacao {
+  id                    String                 @id @default(cuid())
+  usuarioId             String                 @unique
+  usuario               Usuario                @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  categoriasSilenciadas CategoriaNotificacao[]
+  prioridadeMinima      Prioridade             @default(BAIXA)
+  som                   Boolean                @default(true)
+  notificacaoNavegador  Boolean                @default(true)
+  atualizadoEm          DateTime               @updatedAt
+
+  @@map("preferencias_notificacao")
+}
+
+model PreferenciaUsuario {
+  id           String      @id @default(cuid())
+  usuarioId    String      @unique
+  usuario      Usuario     @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  tema         TemaUsuario @default(SISTEMA)
+  atualizadoEm DateTime    @updatedAt
+
+  @@map("preferencias_usuario")
+}
+
+enum TemaUsuario {
+  CLARO
+  ESCURO
+  SISTEMA
+}
+
+model AcessoCanalExtra {
+  id            String       @id @default(cuid())
+  colaboradorId String?
+  colaborador   Colaborador? @relation(fields: [colaboradorId], references: [id], onDelete: Cascade)
+  setorOrigemId String?
+  setorOrigem   Setor?       @relation("SetorOrigemAcessoExtra", fields: [setorOrigemId], references: [id], onDelete: Cascade)
+
+  tipo             TipoMensagem
+  setorDestinoId   String?
+  setorDestino     Setor?       @relation("SetorDestinoAcessoExtra", fields: [setorDestinoId], references: [id], onDelete: Cascade)
+  unidadeDestinoId String?
+  unidadeDestino   Unidade?     @relation(fields: [unidadeDestinoId], references: [id], onDelete: Cascade)
+
+  observacao String?
+  criadoEm   DateTime @default(now())
+
+  @@index([colaboradorId])
+  @@index([setorOrigemId])
+  @@map("acessos_canal_extra")
+}
+
+
+// ==== Marcação de leitura de canal (recuperado 07/08/2026) ====
+model LeituraCanal {
+  id           String       @id @default(cuid())
+  usuarioId    String
+  usuario      Usuario      @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  tipo         TipoMensagem
+  // Id da Unidade ou do Setor conforme `tipo` — mesma convenção de
+  // Mensagem.unidadeId/setorId, só que aqui unificado num campo só porque
+  // nunca precisamos filtrar/juntar por ele separadamente, só checar
+  // usuarioId+tipo+canalId como uma chave composta.
+  canalId      String
+  lidaAte      DateTime     @default(now())
+  atualizadoEm DateTime     @updatedAt
+
+  @@unique([usuarioId, tipo, canalId])
+  @@map("leituras_canal")
+}
