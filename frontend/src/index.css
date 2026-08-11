@@ -1,0 +1,267 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Tokens de tema (10/07/2026, Preferências → Tema). `COLORS` em
+   components/ui.tsx aponta pra estas variáveis em vez de valores fixos —
+   é assim que os ~50 lugares que já usam `style={{ color: COLORS.ink }}`
+   etc. (espalhados por praticamente toda página do sistema) ganham modo
+   escuro de graça, sem precisar tocar em cada um: o navegador resolve a
+   variável de novo sempre que a classe `dark` aparece/some de <html> (ver
+   theme/ThemeContext.tsx). Os valores de `.dark` não são uma inversão
+   mecânica — foram escolhidos pra manter contraste de leitura equivalente
+   ao tema claro. */
+:root {
+  /* Redesign visual "Stripe Dashboard rico" (14/07/2026, pedido do Vini —
+     "não identifiquei nenhuma modernização no design, está a mesma coisa
+     mas com uns efeitos a mais"). Achado honesto: as Fases 1-3 mexeram em
+     token de cor/espaçamento/movimento e em consistência de componente, mas
+     nunca no "esqueleto visual" — fundo chapado, cards com sombra quase
+     invisível, raio pequeno, cor usada com timidez. `--color-bg` deixa de
+     ser um cinza sólido e vira um gradiente bem sutil (quase imperceptível
+     como gradiente isolado, mas dá profundidade ao fundo em vez de uma
+     chapa plana) — mesma ideia usada em dashboards tipo Stripe. Continua
+     funcionando em todo lugar que já lê `COLORS.bg`/`var(--color-bg)` via
+     `background:`, sem precisar mudar nenhum ponto de uso.
+     `--radius-card`/`--radius-control` centralizam o novo raio (antes cada
+     componente tinha `rounded-lg`/`rounded-xl` soltos, sem relação um com
+     o outro) — usados via `rounded-[var(--radius-card)]` no Tailwind. */
+  --radius-card: 1rem;      /* 16px — cards, painéis, KPICards */
+  --radius-control: 0.75rem; /* 12px — botões, inputs, selects, itens de menu */
+  --color-bg: radial-gradient(ellipse 1200px 800px at 15% -10%, #fdeef0 0%, transparent 55%), linear-gradient(180deg, #f8f7fb 0%, #f4f5f9 100%);
+  --color-surface: #ffffff;
+  --color-surface-alt: #f3f4f6;
+  --color-ink: #0f172a;
+  --color-ink-soft: #334155;
+  --color-brass: #ed020b;
+  --color-brick: #b70208;
+  --color-sage: #047857;
+  --color-amber: #d97706;
+  --color-border: #e2e5ea;
+  /* Chrome de marca (sidebar, avatar de iniciais, badge de conexão, aba
+     ativa) — deliberadamente NÃO muda entre claro/escuro. Antes usava
+     COLORS.ink direto (que era sempre #0f172a, um escuro fixo por
+     coincidência); quando COLORS.ink virou var(--color-ink) — que PRECISA
+     clarear no tema escuro pra texto continuar legível — esses 4 usos
+     como FUNDO (não texto) teriam quebrado (fundo claro + texto branco por
+     cima, ilegível). --color-chrome existe pra separar os dois papéis. */
+  --color-chrome: #0f172a;
+
+  /* Sistema de elevação (13/07/2026, Fundação Visual — Modernização
+     Completa, Fase 1, Tarefa "Sistema de elevação/sombra consistente").
+     Antes, `CARD_SHADOW`/`CARD_SHADOW_HOVER` (ui.tsx) eram strings rgba
+     fixas — corretas no tema claro (sombra escura sutil sobre fundo
+     branco), mas praticamente invisíveis no tema escuro: uma sombra
+     rgba(15,23,42,...) — quase preta — não cria nenhuma diferença
+     perceptível de profundidade quando já está sobre um fundo escuro
+     (--color-bg: #0b0e14). `--elevation-1/2/3` resolvem isso tendo um
+     valor PRÓPRIO por tema, não uma inversão mecânica: no escuro, a sombra
+     precisa de opacidade bem maior (pra continuar mais escura que o
+     próprio fundo escuro) — o oposto do que a intuição de "clarear tudo no
+     dark mode" sugeriria. Os componentes continuam lendo só `CARD_SHADOW`/
+     `CARD_SHADOW_HOVER`/estas variáveis — nenhum ponto de uso precisa saber
+     em qual tema está.
+     -1: repouso (KPICard, cartões de listagem, cartões de autenticação)
+     -2: hover/elevado (mesmo conjunto, ao passar o mouse ou focar)
+     -3: flutuante (Modal — precisa se destacar do próprio overlay escurecido
+         atrás dele, não só do conteúdo da página) */
+  --elevation-1: 0 2px 6px rgba(15, 23, 42, 0.06), 0 1px 14px rgba(15, 23, 42, 0.05);
+  --elevation-2: 0 10px 24px rgba(15, 23, 42, 0.10), 0 4px 34px rgba(15, 23, 42, 0.08);
+  --elevation-3: 0 24px 48px rgba(15, 23, 42, 0.16), 0 8px 20px rgba(15, 23, 42, 0.10);
+}
+.dark {
+  --color-bg: radial-gradient(ellipse 1200px 800px at 15% -10%, #2a1216 0%, transparent 55%), linear-gradient(180deg, #0b0e14 0%, #0d1017 100%);
+  --color-surface: #151a24;
+  --color-surface-alt: #1c222f;
+  --color-ink: #f1f5f9;
+  --color-ink-soft: #b6c0cf;
+  --color-brass: #fd2f37;
+  --color-brick: #fca5a5;
+  --color-sage: #34d399;
+  --color-amber: #fbbf24;
+  --color-border: #2b3242;
+
+  /* Elevação mais generosa no redesign "Stripe rico" (14/07/2026) — os
+     valores anteriores (herdados da Fase 1) eram "suficientes pra dar
+     profundidade sutil"; o objetivo agora é diferente: a sombra precisa se
+     LER como sombra à primeira vista, não só existir tecnicamente. Blur e
+     espalhamento maiores em todos os 3 níveis. */
+  --elevation-1: 0 2px 6px rgba(0, 0, 0, 0.36), 0 1px 12px rgba(0, 0, 0, 0.28);
+  --elevation-2: 0 8px 20px rgba(0, 0, 0, 0.44), 0 4px 32px rgba(0, 0, 0, 0.36);
+  --elevation-3: 0 24px 48px rgba(0, 0, 0, 0.55), 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color-scheme: light;
+}
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Scrollbar discreta — o padrão do navegador (barra cinza grossa) destoa do
+   resto do sistema, que usa cinzas suaves e cantos arredondados em tudo. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 999px;
+  border: 2px solid #f7f8fa;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #3a4254;
+  border-color: #0b0e14;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #4b5468;
+}
+
+/* ============================================================
+   Tokens de movimento (10/07/2026 — Padronização de Animações e
+   Transições de Todo o Sistema).
+   Antes desta padronização cada componente tinha sua própria duração
+   solta (0.15s aqui, 0.18s ali, 0.22s acolá) copiada por semelhança
+   visual, não por sistema. Daqui pra frente TODO componente novo (e,
+   progressivamente, os existentes) usa uma destas variáveis em vez de
+   um número fixo — é o que garante "um único padrão em todo o
+   sistema", exigido explicitamente no pedido.
+   ============================================================ */
+:root {
+  /* Curva padrão do sistema ("ease-out-expo"): entrada rápida que
+     desacelera com elegância no final — a sensação de "qualidade e
+     refinamento" pedida como objetivo. Já era usada informalmente em
+     modalIn/toastIn; agora é O padrão, não uma coincidência. */
+  --motion-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Espelho da curva acima para animações de SAÍDA: acelera ao
+     desaparecer em vez de desacelerar — mesma personalidade, sentido
+     inverso. Evita que fechar pareça "em câmera lenta". */
+  --motion-ease-out: cubic-bezier(0.7, 0, 0.84, 0);
+
+  /* Durações — quatro degraus cobrem o sistema inteiro. Escala
+     pequena de propósito: nada aqui deve ser perceptível como
+     "esperar a animação terminar", só suave o bastante pra não ser
+     abrupto. */
+  --motion-instant: 100ms;  /* feedback de clique/press (scale, cor) */
+  --motion-fast: 150ms;     /* hover, foco, microinterações de ícone */
+  --motion-base: 200ms;     /* padrão: maioria das transições de UI */
+  --motion-panel: 220ms;    /* modais, dropdowns, painéis, toasts */
+  --motion-page: 260ms;     /* troca de módulo/página inteira */
+}
+
+/* Acessibilidade — critério obrigatório do pedido: respeitar
+   prefers-reduced-motion. Em vez de caçar `animation`/`transition`
+   individualmente em cada componente, esta regra global reduz TODA
+   animação e transição do sistema a praticamente zero pra quem tem
+   essa preferência ativada no SO, sem precisar de lógica em JS. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Transições de entrada usadas pelo Modal (components/ui.tsx) — sem
+   biblioteca de animação, só o suficiente pra não "piscar" na tela. */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes modalIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+/* Saída do Modal — antes o fechamento era instantâneo (desmontava
+   sem animação nenhuma); agora espelha a entrada em sentido inverso
+   e mais rápido, coerente com --motion-ease-out. */
+@keyframes modalOut {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(6px) scale(0.98); }
+}
+
+/* Pop-up de notificação em tempo real (09/07/2026, pedido do Vini: "a
+   notificação chegar em pop-up e conseguir clicar e ir no destino") — mesmo
+   racional das duas acima, entrada suave sem biblioteca de animação. */
+@keyframes toastIn {
+  from { opacity: 0; transform: translateX(16px) scale(0.98); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+@keyframes toastOut {
+  from { opacity: 1; transform: translateX(0) scale(1); }
+  to { opacity: 0; transform: translateX(16px) scale(0.98); }
+}
+
+/* Entrada escalonada (dashboard, listas) — cada item aplica um
+   `animation-delay` incremental via style inline ou classe utilitária
+   nth-child (ver Home.tsx). */
+@keyframes staggerIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Troca de módulo/página (App.tsx) — entrada discreta pra substituir
+   o "corte seco" de trocar de tela instantaneamente. */
+@keyframes pageIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Skeleton loading — placeholder animado enquanto dados carregam, no
+   lugar de tela em branco que "pula" quando o conteúdo chega. Cor
+   dupla (clara/escura) via var(--color-surface-alt) já resolve o
+   contraste certo em cada tema sem precisar de uma versão .dark
+   separada aqui. */
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
+}
+
+/* Entrada de cards em grids de listagem (Padronização de Animações,
+   10/07/2026) — achado de auditoria: aplicar filtro/busca numa lista
+   (Colaboradores, Equipamentos, Linhas, Acessos etc.) fazia os cards
+   aparecerem/sumirem sem nenhuma transição, um "corte seco" que
+   destoava do resto do sistema. Reaproveita a keyframe `staggerIn` já
+   usada no dashboard — cada card que entra de novo no resultado
+   filtrado (React monta um elemento novo, já que ele não existia no DOM
+   um instante antes) ganha essa entrada suave; cards que já estavam
+   visíveis não são afetados, porque o React só (re)monta os que
+   realmente aparecem no array filtrado. Sem exit animation (cardas que
+   saem do filtro somem instantaneamente) — replicar aqui o padrão
+   "mirror-list" dos toasts pra cada grid de listagem do sistema seria
+   caro de manter para o ganho de UX marginal; entrada já resolve a
+   maior parte da sensação de "salto".
+   `duration: --motion-fast` (não --motion-page) de propósito — evita
+   ficar perceptível/lento quando a pessoa digita rápido numa busca. */
+.card-entrada {
+  animation: staggerIn var(--motion-fast) var(--motion-ease) both;
+}
+.skeleton {
+  background-image: linear-gradient(
+    90deg,
+    var(--color-surface-alt) 25%,
+    var(--color-border) 37%,
+    var(--color-surface-alt) 63%
+  );
+  background-size: 400% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  border-radius: 0.5rem;
+}
