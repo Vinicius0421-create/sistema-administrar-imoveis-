@@ -41,6 +41,8 @@ model Unidade {
   solicitacoesPapelaria SolicitacaoPapelaria[]
   // Back-relation de AcessoCanalExtra.unidadeDestinoId (recuperado 07/08/2026)
   acessosCanalExtraDestino AcessoCanalExtra[]
+  // Marketing Imobiliário — Banco de Imóveis (13/08/2026)
+  imoveisMarketing         ImovelMarketing[]
 
   @@map("unidades")
 }
@@ -140,6 +142,13 @@ enum Papel {
   COLABORADOR
   RH
   FINANCEIRO
+  // Marketing Imobiliário (13/08/2026, pedido do Vini) — papel de
+  // departamento, mesmo racional de RH/FINANCEIRO acima: sempre atribuído a
+  // um Usuario já vinculado a um Colaborador existente, nunca uma segunda
+  // entidade de pessoa. Gerencia o Banco de Imóveis (ImovelMarketing) e os
+  // 4 domínios extensíveis do módulo (Canal/Objetivo/Origem de Lead/Tipo de
+  // Criativo) — ver marketing.routes.ts.
+  MARKETING
 }
 
 model Usuario {
@@ -340,6 +349,11 @@ model Colaborador {
   // Pagamentos / CNAB240 (reconstruído 12/08/2026)
   dadosBancarios         DadosBancariosColaborador?
   pagamentos             PagamentoColaborador[]
+  // Marketing Imobiliário — corretor responsável por um imóvel do Banco de
+  // Imóveis (13/08/2026). Opcional: o corretor também pode ser só um nome
+  // livre em ImovelMarketing.corretorNome quando não corresponde a um
+  // Colaborador cadastrado (ex: corretor parceiro externo).
+  imoveisComoCorretorMarketing ImovelMarketing[]
 
   @@index([status])
   @@map("colaboradores")
@@ -1023,6 +1037,8 @@ enum CategoriaNotificacao {
   FINANCEIRO
   // RH — Documentos de colaborador (11/08/2026)
   DOCUMENTO
+  // Marketing Imobiliário — Banco de Imóveis (13/08/2026)
+  MARKETING
 }
 
 enum TipoNotificacao {
@@ -1086,6 +1102,15 @@ enum TipoNotificacao {
   DOCUMENTO_VENCENDO
   DOCUMENTO_VENCIDO
   DOCUMENTO_COMENTARIO
+  // Marketing Imobiliário — Banco de Imóveis (13/08/2026, Fases 1+2+8).
+  // STATUS_MUDOU/VENDIDO disparados pela rota PATCH /marketing/imoveis/:id
+  // (edição manual) e pelo job de sincronização com o Imoview (Fase 8, ver
+  // utils/marketingImoviewSyncJob.ts) sempre que a mudança de status altera
+  // o campo. SINCRONIZACAO_ERRO cobre falha na rodada de sincronização
+  // automática/manual com a API do Imoview.
+  MARKETING_IMOVEL_STATUS_MUDOU
+  MARKETING_IMOVEL_VENDIDO
+  MARKETING_SINCRONIZACAO_ERRO
 }
 
 
@@ -1766,4 +1791,134 @@ model LeituraCanal {
 
   @@unique([usuarioId, tipo, canalId])
   @@map("leituras_canal")
+}
+
+// ---------------------------------------------------------------------------
+// Marketing Imobiliário (13/08/2026, pedido do Vini) — Fases 1 (Fundação) +
+// 2 (Banco de Imóveis) + 8 (Integração Imoview) implementadas juntas, para
+// não precisar de uma segunda migration só para os campos aditivos da
+// integração (`origemImoview` em diante, todos opcionais/com default — um
+// imóvel cadastrado manualmente pelo Marketing nunca precisa passar por
+// sincronização nenhuma). Ver src/routes/marketing.routes.ts,
+// src/utils/imoviewClient.ts e src/utils/marketingImoviewSyncJob.ts.
+// ---------------------------------------------------------------------------
+
+enum StatusImovel {
+  DISPONIVEL
+  RESERVADO
+  VENDIDO
+  INATIVO
+}
+
+enum PrioridadeImovel {
+  A_COMERCIAL
+  B_PORTFOLIO
+  C_ESTOQUE
+}
+
+// OUTRO é um fallback seguro, não um tipo "esquecido": só "Apartamento" foi
+// confirmado por chamada real à API do Imoview numa sessão anterior — o
+// resto do mapeamento (Casa/Lote/Chácara) é inferência razoável a partir do
+// nome do campo, nunca validada ao vivo. Um valor de tipo desconhecido
+// vindo da API cai em OUTRO em vez de quebrar a sincronização inteira (ver
+// utils/imoviewClient.ts).
+enum TipoImovel {
+  CASA
+  APARTAMENTO
+  LOTE
+  CHACARA
+  OUTRO
+}
+
+model ImovelMarketing {
+  id             String   @id @default(cuid())
+  codigo         String   @unique // "IMV-001" (cadastro manual) OU o código do Imoview quando sincronizado
+  unidadeId      String
+  unidade        Unidade  @relation(fields: [unidadeId], references: [id])
+  tipo           TipoImovel
+  bairroRegiao   String?
+  descricaoCurta String?
+  valor          Decimal? @db.Decimal(12, 2)
+  corretorId     String?
+  corretor       Colaborador? @relation(fields: [corretorId], references: [id])
+  corretorNome   String?
+  temFotos       Boolean  @default(false)
+  temVideo       Boolean  @default(false)
+  linkPasta      String?
+  prioridade     PrioridadeImovel @default(B_PORTFOLIO)
+  status         StatusImovel     @default(DISPONIVEL)
+  observacoes    String?
+
+  // Campos da Fase 8 (Integração Imoview) — aditivos, nunca obrigatórios,
+  // para não quebrar cadastro manual sem sincronização. O job de
+  // sincronização (marketingImoviewSyncJob.ts) NUNCA sobrescreve
+  // prioridade/observacoes/corretorId/corretorNome — só editáveis à mão
+  // pelo Marketing, mesmo vindo um imóvel sincronizado.
+  origemImoview         Boolean   @default(false)
+  codigoImoview         Int?      @unique
+  fotoPrincipalUrl      String?
+  fotosUrls             String[]  @default([])
+  videoUrl              String?
+  tituloSugerido        String?
+  descricaoSugerida     String?
+  ultimaSincronizacaoEm DateTime?
+
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  @@map("imoveis_marketing")
+}
+
+// Histórico de execuções do job de sincronização com o Imoview (manual via
+// POST /marketing/sincronizacao/executar ou automática via
+// marketingImoviewSyncJob.ts) — permite ao Marketing ver se a última rodada
+// funcionou sem precisar olhar log de servidor.
+model SincronizacaoImoviewLog {
+  id          String   @id @default(cuid())
+  executadoEm DateTime @default(now())
+  sucesso     Boolean
+  quantidade  Int      @default(0)
+  erro        String?
+
+  @@map("sincronizacoes_imoview_log")
+}
+
+// 4 domínios extensíveis do Marketing (13/08/2026) — mesmo racional das 7
+// listas mestras de dominios.routes.ts (Unidade/Setor/etc.), mas com
+// escrita liberada para ADMINISTRADOR E MARKETING (não só ADMINISTRADOR):
+// o Marketing precisa conseguir cadastrar um canal/objetivo/origem/tipo de
+// criativo novo sozinho, sem depender de deploy nem de pedir pro admin.
+// Ficam FORA do helper genérico `registrarDominioSimples` (que só permite
+// ADMINISTRADOR) de propósito — ver comentário completo em
+// marketing.routes.ts.
+model CanalMarketing {
+  id     String             @id @default(cuid())
+  nome   String             @unique
+  status StatusAtivoInativo @default(ATIVO)
+
+  @@map("canais_marketing")
+}
+
+model ObjetivoMarketing {
+  id     String             @id @default(cuid())
+  nome   String             @unique
+  status StatusAtivoInativo @default(ATIVO)
+
+  @@map("objetivos_marketing")
+}
+
+model OrigemLeadMarketing {
+  id     String             @id @default(cuid())
+  nome   String             @unique
+  status StatusAtivoInativo @default(ATIVO)
+
+  @@map("origens_lead_marketing")
+}
+
+model TipoCriativoMarketing {
+  id     String             @id @default(cuid())
+  nome   String             @unique
+  status StatusAtivoInativo @default(ATIVO)
+
+  @@map("tipos_criativo_marketing")
 }

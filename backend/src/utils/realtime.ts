@@ -44,7 +44,9 @@ export type RecursoDados =
   | "pagamentos"
   | "dominios"
   // RH — Documentos de colaborador (11/08/2026)
-  | "documentos";
+  | "documentos"
+  // Marketing Imobiliário — Banco de Imóveis (13/08/2026)
+  | "marketing";
 
 export function avisarMudanca(...recursos: RecursoDados[]): void {
   if (recursos.length === 0) return;

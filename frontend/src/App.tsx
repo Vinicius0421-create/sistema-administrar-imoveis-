@@ -6,7 +6,7 @@ import { RedefinirSenhaPage } from "./pages/RedefinirSenha";
 import { TrocarSenhaObrigatoriaPage } from "./pages/TrocarSenhaObrigatoria";
 import { Button, COLORS, ErrorBoundary, FOCUS_RING_CLASS, FONT_DISPLAY, LoadingState, SkeletonKPIGrid, SkeletonListaCartoes } from "./components/ui";
 import {
-  Banknote, Home, Users, Laptop, Phone, Key, ShoppingCart, Wrench, Repeat, HistoryIcon, Menu, LogOut, Settings, ClipboardList, MessageCircle, UserCircle2, Search, FileText,
+  Banknote, Home, Users, Laptop, Phone, Key, ShoppingCart, Wrench, Repeat, HistoryIcon, Menu, LogOut, Settings, ClipboardList, MessageCircle, UserCircle2, Search, FileText, Building2,
 } from "./components/icons";
 import { LOGO_DATA_URI } from "./assets/logo";
 import { Papel } from "./types";
@@ -67,6 +67,8 @@ const PortalColaborador = React.lazy(() => import("./pages/PortalColaborador").t
 const PortalSuportePage = React.lazy(() => import("./pages/PortalSuporte").then((m) => ({ default: m.PortalSuportePage })));
 const MensagensPage = React.lazy(() => import("./pages/Mensagens").then((m) => ({ default: m.MensagensPage })));
 const DocumentosPage = React.lazy(() => import("./pages/Documentos").then((m) => ({ default: m.DocumentosPage })));
+// Marketing Imobiliário (13/08/2026) — Banco de Imóveis + integração Imoview.
+const MarketingPage = React.lazy(() => import("./pages/Marketing").then((m) => ({ default: m.MarketingPage })));
 
 interface NavItem {
   key: string;
@@ -103,6 +105,10 @@ const NAV: Record<Papel, NavItem[]> = {
     { key: "pagamentos", label: "Pagamentos", icon: Banknote, grupo: "Pessoas" },
     // Documentos de RH (11/08/2026, Fase RH da Evolução Completa).
     { key: "documentos", label: "Documentos", icon: FileText, grupo: "Pessoas" },
+    // Marketing Imobiliário (13/08/2026) — Banco de Imóveis + integração
+    // Imoview. ADMINISTRADOR gerencia igual MARKETING (ver
+    // PAPEIS_GERENCIAM_MARKETING em marketing.routes.ts).
+    { key: "marketing-imoveis", label: "Imóveis", icon: Building2, grupo: "Marketing" },
     { key: "configuracoes", label: "Configurações", icon: Settings, grupo: "Sistema" },
   ],
   // Reorganização de hierarquia (17/07/2026, pedido do Vini: "o gestor/
@@ -125,6 +131,11 @@ const NAV: Record<Papel, NavItem[]> = {
     { key: "solicitacoes", label: "Solicitações", icon: ShoppingCart, grupo: "Atendimento" },
     { key: "movimentacoes", label: "Movimentações", icon: Repeat, grupo: "Patrimônio" },
     { key: "colaboradores", label: "Colaboradores", icon: Users, grupo: "Pessoas" },
+    // Marketing Imobiliário (13/08/2026) — só leitura: "gestor vê resumo,
+    // não edita" (design do módulo). MarketingPage já esconde ações de
+    // escrita sozinha para quem não é ADMINISTRADOR/MARKETING (ver
+    // PAPEIS_EDITAM em Marketing.tsx), mesmo racional de colaboradoresReadOnly.
+    { key: "marketing-imoveis", label: "Imóveis", icon: Building2, grupo: "Marketing" },
   ],
   // "solicitacoes" adicionado (14/07/2026, pedido do Vini: "solicitação de
   // equipamento tem que estar habilitado para o técnico") — só a aba
@@ -205,6 +216,14 @@ const NAV: Record<Papel, NavItem[]> = {
     { key: "colaboradores", label: "Colaboradores", icon: Users, grupo: "Pessoas" },
     // Pagamentos CNAB (20/07/2026) — o módulo é dele.
     { key: "pagamentos", label: "Pagamentos", icon: Banknote, grupo: "Pessoas" },
+  ],
+  // MARKETING (13/08/2026, pedido do Vini) — papel novo, escopo estreito:
+  // só o Banco de Imóveis (única tela real do módulo hoje, ver
+  // Marketing.tsx). Sem Colaboradores/Patrimônio/Chamados — não é gestão de
+  // pessoas nem suporte.
+  MARKETING: [
+    { key: "home", label: "Visão Geral", icon: Home, grupo: "Início" },
+    { key: "marketing-imoveis", label: "Imóveis", icon: Building2, grupo: "Marketing" },
   ],
   COLABORADOR: [],
 };
@@ -687,6 +706,13 @@ function AppShell() {
       // backend, que também barra a rota pra quem tentar chegar direto).
       case "documentos":
         return <DocumentosPage data={data} onChanged={() => refetch("documentos")} />;
+      // Marketing Imobiliário (13/08/2026) — Banco de Imóveis + integração
+      // Imoview. Não usa AppData/refetch (mesmo racional de "pagamentos"
+      // acima): imóveis/sincronização são buscados pela própria página, já
+      // paginados no servidor — só reaproveita data.dominios.unidades e
+      // data.colaboradores, que já vêm no AppData padrão.
+      case "marketing-imoveis":
+        return <MarketingPage data={data} papel={papel} />;
       case "chamados":
         return (
           <ChamadosPage

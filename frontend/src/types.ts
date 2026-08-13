@@ -17,7 +17,12 @@
 // equipamento/papelaria — identidade nova é gestão do ciclo de vida de
 // pessoas (Colaboradores, desligamento, Movimentações), não patrimônio nem
 // aprovação de custo. Ver NAV em App.tsx para o mapa completo por papel.
-export type Papel = "ADMINISTRADOR" | "GESTOR_COORDENADOR" | "SUPORTE_TI" | "COLABORADOR" | "RH" | "FINANCEIRO";
+// MARKETING (13/08/2026, pedido do Vini) — papel novo, dono do módulo de
+// Marketing Imobiliário (Banco de Imóveis + integração Imoview). Mesmo
+// racional de RH/FINANCEIRO acima: só o item "Imóveis" no próprio NAV (ver
+// App.tsx) — sem Equipamentos/Linhas/Acessos/Chamados (não é patrimônio nem
+// suporte), sem Colaboradores (não é gestão de pessoas).
+export type Papel = "ADMINISTRADOR" | "GESTOR_COORDENADOR" | "SUPORTE_TI" | "COLABORADOR" | "RH" | "FINANCEIRO" | "MARKETING";
 
 export const PAPEL_LABEL: Record<Papel, string> = {
   ADMINISTRADOR: "Administrador Geral",
@@ -26,6 +31,7 @@ export const PAPEL_LABEL: Record<Papel, string> = {
   COLABORADOR: "Colaborador (Portal)",
   RH: "RH",
   FINANCEIRO: "Financeiro",
+  MARKETING: "Marketing",
 };
 
 // EM_AVISO (09/07/2026, pedido do Vini) — colaborador em aviso prévio: ainda
@@ -1073,6 +1079,96 @@ export interface DocumentoColaborador {
 export interface PaginatedResponse<T> {
   items: T[];
   meta: { total: number; page: number; pageSize: number; totalPages: number };
+}
+
+// ---------------------------------------------------------------------------
+// Marketing Imobiliário (13/08/2026) — Banco de Imóveis + integração
+// Imoview (Fases 1+2+8). Ver src/pages/Marketing.tsx e src/api/marketing.ts.
+// ---------------------------------------------------------------------------
+
+export type StatusImovel = "DISPONIVEL" | "RESERVADO" | "VENDIDO" | "INATIVO";
+export const STATUS_IMOVEL_LABEL: Record<StatusImovel, string> = {
+  DISPONIVEL: "Disponível",
+  RESERVADO: "Reservado",
+  VENDIDO: "Vendido",
+  INATIVO: "Inativo",
+};
+export const STATUS_IMOVEL_TONE: Record<StatusImovel, "pos" | "neg" | "pend"> = {
+  DISPONIVEL: "pos",
+  RESERVADO: "pend",
+  VENDIDO: "pos",
+  INATIVO: "neg",
+};
+
+export type PrioridadeImovel = "A_COMERCIAL" | "B_PORTFOLIO" | "C_ESTOQUE";
+export const PRIORIDADE_IMOVEL_LABEL: Record<PrioridadeImovel, string> = {
+  A_COMERCIAL: "A — Comercial",
+  B_PORTFOLIO: "B — Portfólio",
+  C_ESTOQUE: "C — Estoque",
+};
+
+export type TipoImovel = "CASA" | "APARTAMENTO" | "LOTE" | "CHACARA" | "OUTRO";
+export const TIPO_IMOVEL_LABEL: Record<TipoImovel, string> = {
+  CASA: "Casa",
+  APARTAMENTO: "Apartamento",
+  LOTE: "Lote",
+  CHACARA: "Chácara",
+  OUTRO: "Outro",
+};
+
+export interface ImovelMarketing {
+  id: string;
+  codigo: string;
+  unidadeId: string;
+  unidade?: Unidade;
+  tipo: TipoImovel;
+  bairroRegiao: string | null;
+  descricaoCurta: string | null;
+  valor: number | string | null;
+  corretorId: string | null;
+  corretor?: { id: string; nomeCompleto: string } | null;
+  corretorNome: string | null;
+  temFotos: boolean;
+  temVideo: boolean;
+  linkPasta: string | null;
+  prioridade: PrioridadeImovel;
+  status: StatusImovel;
+  observacoes: string | null;
+  // Campos da Fase 8 (Integração Imoview) — sempre presentes na resposta,
+  // mas só relevantes/preenchidos quando origemImoview é true. Somente
+  // leitura no formulário quando o imóvel veio da sincronização (ver
+  // Marketing.tsx).
+  origemImoview: boolean;
+  codigoImoview: number | null;
+  fotoPrincipalUrl: string | null;
+  fotosUrls: string[];
+  videoUrl: string | null;
+  tituloSugerido: string | null;
+  descricaoSugerida: string | null;
+  ultimaSincronizacaoEm: string | null;
+  criadoEm: string;
+  atualizadoEm: string;
+}
+
+// 4 domínios extensíveis do módulo (mesmo formato simples de
+// CategoriaProdutoPapelaria acima) — Marketing/Administrador cadastram sem
+// depender de deploy.
+export interface CanalMarketing { id: string; nome: string; status: "ATIVO" | "INATIVO"; }
+export interface ObjetivoMarketing { id: string; nome: string; status: "ATIVO" | "INATIVO"; }
+export interface OrigemLeadMarketing { id: string; nome: string; status: "ATIVO" | "INATIVO"; }
+export interface TipoCriativoMarketing { id: string; nome: string; status: "ATIVO" | "INATIVO"; }
+
+export interface SincronizacaoImoviewLog {
+  id: string;
+  executadoEm: string;
+  sucesso: boolean;
+  quantidade: number;
+  erro: string | null;
+}
+
+export interface StatusSincronizacaoImoview {
+  ativa: boolean;
+  registros: SincronizacaoImoviewLog[];
 }
 
 // Tons visuais dos "Stamps" (badges de status) — igual ao protótipo original.

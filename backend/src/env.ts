@@ -51,6 +51,14 @@ const envSchema = z.object({
   // Base da URL do frontend, usada só para montar o link que vai no e-mail
   // de redefinição de senha (ex: `${FRONTEND_URL}/redefinir-senha?token=...`).
   FRONTEND_URL: z.string().url().default("https://administrar-imoveis.vercel.app"),
+  // Integração Marketing ↔ Imoview (Fase 8, 13/08/2026). Opcional de
+  // propósito, mesmo padrão gracioso de SENTRY_DSN/RESEND_API_KEY acima:
+  // sem IMOVIEW_API_KEY, o job de sincronização automática nunca inicia e a
+  // rota manual (POST /marketing/sincronizacao/executar) responde 400 com
+  // mensagem clara, em vez de o servidor falhar ao subir. Ver
+  // utils/imoviewClient.ts para o que já foi confirmado sobre esta chave
+  // (é real e funciona) vs. o que ainda é suposição (mecanismo de auth).
+  IMOVIEW_API_KEY: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

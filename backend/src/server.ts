@@ -35,6 +35,8 @@ import solicitacoesPapelariaRoutes from "./routes/solicitacoesPapelaria.routes";
 import notificacoesRoutes from "./routes/notificacoes.routes";
 import documentosRoutes from "./routes/documentos.routes";
 import { iniciarAgendadorVencimentoDocumentos } from "./utils/documentosVencimentoJob";
+import marketingRoutes from "./routes/marketing.routes";
+import { iniciarAgendadorSincronizacaoImoview } from "./utils/marketingImoviewSyncJob";
 // Pagamentos / CNAB240 (reativado 12/08/2026, pedido do Vini) — os 5 models
 // que faltavam (FolhaPagamento, PagamentoColaborador, RemessaCnab,
 // DadosBancariosColaborador, ConfiguracaoPagamento) foram reconstruídos
@@ -142,6 +144,9 @@ async function buildServer() {
   // Pagamentos CNAB 240 (20/07/2026, pedido do Vini; reativado 12/08/2026)
   await app.register(pagamentosRoutes);
   await app.register(solicitacoesServicoRoutes);
+  // Marketing Imobiliário (13/08/2026) — Banco de Imóveis + integração
+  // Imoview (Fase 8).
+  await app.register(marketingRoutes);
 
   // Etapa 3 (auditoria de backend, 08/07/2026): várias rotas de POST/PUT
   // aceitam um id de referência (colaboradorId, unidadeId, equipamentoId,
@@ -184,6 +189,12 @@ async function buildServer() {
   // Vencimento de documentos de RH (11/08/2026) — expira documento aprovado
   // vencido e alerta antecedência configurada por tipo de documento.
   iniciarAgendadorVencimentoDocumentos(app);
+
+  // Sincronização Marketing ↔ Imoview (Fase 8, 13/08/2026) — só inicia se a
+  // integração estiver configurada (ver IMOVIEW_API_KEY em env.ts); sem
+  // isso, o módulo de Marketing continua funcionando normalmente em modo
+  // 100% manual.
+  if (env.IMOVIEW_API_KEY) iniciarAgendadorSincronizacaoImoview(app);
 
   return app;
 }
