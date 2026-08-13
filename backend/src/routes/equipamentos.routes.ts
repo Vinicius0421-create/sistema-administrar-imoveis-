@@ -305,16 +305,17 @@ export default async function equipamentosRoutes(app: FastifyInstance) {
       if (!anterior) return reply.code(404).send({ error: "Equipamento não encontrado." });
 
       // Correção do incidente de produção (13/08/2026, confirmado via stack
-      // trace real): Colaborador tem DUAS relações com Equipamento
-      // (colaborador/equipamentos e ultimoColaborador/equipamentosAnteriores
-      // via @relation nomeada) — o Prisma Client 6.19.3 não expõe
-      // `colaboradorId`/`ultimoColaboradorId` como escalar direto no
-      // Unchecked update deste model por causa disso ("Unknown argument
-      // `colaboradorId`. Did you mean `colaborador`?"), embora `categoriaId`/
-      // `marcaId` (relação única, sem ambiguidade) continuem aceitos como
-      // escalar normalmente. `colaboradorId` sai do spread; escrito pela
-      // relação (`connect`/`disconnect`) em vez de escalar.
-      const { acessorioIds, colaboradorId, ...dadosEquipamento } = parsed.data;
+      // trace real, 2 rodadas): assim que UM campo de relação entra no
+      // `data` (ex: `colaborador: {...}`), o Prisma exige que TODOS os FKs
+      // desse objeto usem a forma de relação — não dá pra misturar com
+      // escalar (`categoriaId`/`marcaId` direto), mesmo que isoladamente
+      // cada um funcione. `colaboradorId` também precisava disso à parte:
+      // Colaborador tem DUAS relações com Equipamento (colaborador/
+      // equipamentos e ultimoColaborador/equipamentosAnteriores via
+      // @relation nomeada), e o Prisma Client 6.19.3 não expõe
+      // `colaboradorId` como escalar nesse model por causa disso. Os três
+      // saem do spread; todos escritos pela relação.
+      const { acessorioIds, colaboradorId, categoriaId, marcaId, ...dadosEquipamento } = parsed.data;
 
       const equipamento = await app.prisma.$transaction(async (tx) => {
         const colaboradorMudou =
@@ -326,6 +327,12 @@ export default async function equipamentosRoutes(app: FastifyInstance) {
             ...dadosEquipamento,
             ...("colaboradorId" in parsed.data
               ? { colaborador: colaboradorId ? { connect: { id: colaboradorId } } : { disconnect: true } }
+              : {}),
+            ...("categoriaId" in parsed.data
+              ? { categoria: categoriaId ? { connect: { id: categoriaId } } : { disconnect: true } }
+              : {}),
+            ...("marcaId" in parsed.data
+              ? { marcaEquipamento: marcaId ? { connect: { id: marcaId } } : { disconnect: true } }
               : {}),
             // "De quem era" (17/07/2026) — qualquer edição que tire ou troque
             // o dono registra o dono ANTERIOR; a UI só mostra quando o
