@@ -416,22 +416,42 @@ export default async function mensagensRoutes(app: FastifyInstance) {
     let canaisNaoLidas = 0;
     if (leituras.length > 0) {
       const contagens = await Promise.all(
-        leituras.map((l) =>
-          app.prisma.mensagem.count({
+        leituras.map((l) => {
+          // Fix (13/08/2026, achado ao investigar "badge mostra 6 mensagens
+          // novas, mas nenhuma aparece na lista"): faltava o ramo de
+          // CANAL_SETOR_UNIDADE aqui — sem ele, caía no `{}` do CANAL_EMPRESA
+          // (nenhum filtro de unidade/setor) e contava TODA mensagem desse
+          // tipo no sistema inteiro, de qualquer unidade×setor, não só do
+          // canal específico que esta LeituraCanal se refere. Um colaborador
+          // com 1 canal setor×unidade (ex: "Locação · Itaúna") acabava
+          // contando mensagens de "Financeiro · Igarapé" também — daí o
+          // descompasso entre o número no sino e a lista de conversas real
+          // (que já filtra certo por canal, ver GET /mensagens/canal/...).
+          // `canalId` para este tipo é a chave composta "unidadeId:setorId"
+          // (ver chaveSetorUnidade em canaisMensagem.ts/api/mensagens.ts no
+          // frontend — mesmo formato usado ao gravar esta LeituraCanal, ver
+          // `canalId: id` mais acima nesta rota).
+          let filtroCanal: { unidadeId?: string; setorId?: string } = {};
+          if (l.tipo === "CANAL_UNIDADE") {
+            filtroCanal = { unidadeId: l.canalId };
+          } else if (l.tipo === "CANAL_SETOR") {
+            filtroCanal = { setorId: l.canalId };
+          } else if (l.tipo === "CANAL_SETOR_UNIDADE") {
+            const [unidadeId, setorId] = l.canalId.split(":");
+            filtroCanal = { unidadeId, setorId };
+          }
+          // CANAL_EMPRESA (canal da empresa inteira) não tem unidadeId/
+          // setorId — não filtra por nenhum dos dois, só pelo tipo (mantém
+          // filtroCanal vazio de propósito).
+          return app.prisma.mensagem.count({
             where: {
               tipo: l.tipo,
-              // CANAL_EMPRESA (canal da empresa inteira) não tem unidadeId/
-              // setorId — não filtra por nenhum dos dois, só pelo tipo.
-              ...(l.tipo === "CANAL_UNIDADE"
-                ? { unidadeId: l.canalId }
-                : l.tipo === "CANAL_SETOR"
-                  ? { setorId: l.canalId }
-                  : {}),
+              ...filtroCanal,
               criadoEm: { gt: l.lidaAte },
               remetenteId: { not: meuId },
             },
-          })
-        )
+          });
+        })
       );
       canaisNaoLidas = contagens.reduce((a, b) => a + b, 0);
     }

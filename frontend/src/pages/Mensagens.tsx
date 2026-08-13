@@ -160,8 +160,17 @@ function fmtHora(iso: string): string {
   return new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
 
-function nomeExibicao(pessoa: AutorMensagem): string {
-  return pessoa.colaborador?.nomeCompleto || pessoa.email;
+function nomeExibicao(pessoa: AutorMensagem | null | undefined): string {
+  // Defensivo (13/08/2026, investigação do TypeError "reading 'nome'"/
+  // "reading 'colaborador'" reportado em produção): esta função é chamada em
+  // TODA bolha de mensagem renderizada (ver usos de nomeExibicao(m.remetente)
+  // abaixo) — é o caminho mais executado da tela inteira. O tipo `Mensagem`
+  // marca `remetente` como obrigatório, mas se o backend algum dia devolver
+  // uma mensagem sem remetente populado (ex: falha de include, remetente
+  // removido), sem esta guarda a tela inteira quebrava por causa de UMA
+  // mensagem malformada em vez de só aquela mensagem mostrar um nome genérico.
+  if (!pessoa) return "Usuário";
+  return pessoa.colaborador?.nomeCompleto || pessoa.email || "Usuário";
 }
 
 // Prefixo visual por tipo de canal na lista — DIRETA não leva prefixo (é uma
@@ -1977,7 +1986,16 @@ function VisualizarComoModal({ colaboradores, onFechar }: { colaboradores: AppDa
           ) : resultado ? (
             <div className="text-xs space-y-3 max-h-96 overflow-y-auto pr-1">
               <p className="text-slate-700 dark:text-slate-300">
-                <span className="font-semibold">{resultado.usuario.nome || selecionado.nome}</span> ({resultado.usuario.papel})
+                {/* Fix (13/08/2026, achado ao investigar TypeError "Cannot read
+                    properties of undefined (reading 'nome')" reportado em
+                    produção): `resultado.usuario` está tipado como obrigatório em
+                    api/mensagens.ts, mas nada garante isso em runtime — se o
+                    backend um dia devolver esse campo ausente (ex: usuário
+                    sem Colaborador vinculado, erro de serialização), este
+                    acesso direto derrubava todo o painel "Visualizar como".
+                    Optional chaining com fallback pro nome já selecionado na
+                    lista, que sempre existe. */}
+                <span className="font-semibold">{resultado.usuario?.nome || selecionado.nome}</span> ({resultado.usuario?.papel})
                 {resultado.canais.irrestrito && (
                   <span className="ml-1.5 text-gray-400 dark:text-slate-500">— papel irrestrito, vê todos os canais por desenho.</span>
                 )}
