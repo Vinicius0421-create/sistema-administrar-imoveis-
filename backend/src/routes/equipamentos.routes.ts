@@ -304,7 +304,17 @@ export default async function equipamentosRoutes(app: FastifyInstance) {
       const anterior = await app.prisma.equipamento.findUnique({ where: { id } });
       if (!anterior) return reply.code(404).send({ error: "Equipamento não encontrado." });
 
-      const { acessorioIds, ...dadosEquipamento } = parsed.data;
+      // Correção do incidente de produção (13/08/2026, confirmado via stack
+      // trace real): Colaborador tem DUAS relações com Equipamento
+      // (colaborador/equipamentos e ultimoColaborador/equipamentosAnteriores
+      // via @relation nomeada) — o Prisma Client 6.19.3 não expõe
+      // `colaboradorId`/`ultimoColaboradorId` como escalar direto no
+      // Unchecked update deste model por causa disso ("Unknown argument
+      // `colaboradorId`. Did you mean `colaborador`?"), embora `categoriaId`/
+      // `marcaId` (relação única, sem ambiguidade) continuem aceitos como
+      // escalar normalmente. `colaboradorId` sai do spread; escrito pela
+      // relação (`connect`/`disconnect`) em vez de escalar.
+      const { acessorioIds, colaboradorId, ...dadosEquipamento } = parsed.data;
 
       const equipamento = await app.prisma.$transaction(async (tx) => {
         const colaboradorMudou =
@@ -314,22 +324,26 @@ export default async function equipamentosRoutes(app: FastifyInstance) {
           where: { id },
           data: {
             ...dadosEquipamento,
+            ...("colaboradorId" in parsed.data
+              ? { colaborador: colaboradorId ? { connect: { id: colaboradorId } } : { disconnect: true } }
+              : {}),
             // "De quem era" (17/07/2026) — qualquer edição que tire ou troque
             // o dono registra o dono ANTERIOR; a UI só mostra quando o
-            // equipamento está sem dono atual (estoque).
+            // equipamento está sem dono atual (estoque). Mesma correção:
+            // relação em vez de escalar direto.
             ...(colaboradorMudou && anterior.colaboradorId
-              ? { ultimoColaboradorId: anterior.colaboradorId }
+              ? { ultimoColaborador: { connect: { id: anterior.colaboradorId } } }
               : {}),
-          },
+          } as Prisma.EquipamentoUpdateInput,
         });
 
         if (colaboradorMudou) {
           await tx.historicoTroca.create({
             data: {
               equipamentoId: id,
-              tipoEvento: anterior.colaboradorId && dadosEquipamento.colaboradorId ? "TROCA" : "ENTREGA",
+              tipoEvento: anterior.colaboradorId && colaboradorId ? "TROCA" : "ENTREGA",
               colaboradorOrigemId: anterior.colaboradorId,
-              colaboradorDestinoId: dadosEquipamento.colaboradorId,
+              colaboradorDestinoId: colaboradorId,
               responsavelRegistroId: request.user.sub,
               status: "CONCLUIDO",
             },
@@ -417,17 +431,22 @@ export default async function equipamentosRoutes(app: FastifyInstance) {
       if (!equipamento.colaboradorId) {
         return reply.code(409).send({ error: "Este equipamento já está no estoque." });
       }
+      // Captura o valor já validado como não-nulo — o TS não propaga o
+      // narrowing acima para dentro do closure da transação abaixo.
+      const colaboradorAnteriorId = equipamento.colaboradorId;
 
       const resultado = await app.prisma.$transaction(async (tx) => {
         const atualizado = await tx.equipamento.update({
           where: { id },
           data: {
-            colaboradorId: null,
+            // Correção do incidente de produção (13/08/2026) — mesma causa
+            // do handler PUT acima: relação em vez de escalar direto.
+            colaborador: { disconnect: true },
             status: "DISPONIVEL",
             dataDevolucao: new Date(),
             // "De quem era" (17/07/2026) — o dono que está devolvendo fica
             // registrado no próprio equipamento, visível no estoque.
-            ultimoColaboradorId: equipamento.colaboradorId,
+            ultimoColaborador: { connect: { id: colaboradorAnteriorId } },
           },
         });
 
