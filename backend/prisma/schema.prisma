@@ -427,6 +427,15 @@ model Equipamento {
   marcaEquipamento  MarcaEquipamento? @relation(fields: [marcaId], references: [id])
   localizacao       String?
   dataAquisicao     DateTime?
+  // Achado de drift (13/08/2026, incidente "Internal Server Error ao salvar
+  // Equipamento"): colunas já existiam na tabela real de produção
+  // (confirmado via information_schema.columns) mas nunca foram declaradas
+  // aqui — o Zod/frontend já as usava, e a spread de dadosEquipamento
+  // batia em "Unknown argument" assim que os outros bugs deste mesmo
+  // incidente foram corrigidos.
+  garantiaAte       DateTime?
+  fornecedor        String?
+  notaFiscal        String?
   // Depreciação linear simples (recuperado 07/08/2026 a partir do uso real
   // em equipamentos.routes.ts, função comDepreciacao) — Decimal pra valor
   // monetário (nunca float), vidaUtilMeses em meses corridos (30,44
