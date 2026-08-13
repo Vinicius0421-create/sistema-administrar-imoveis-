@@ -185,6 +185,14 @@ model Usuario {
   preferenciaUsuario     PreferenciaUsuario?
   // Back-relation de LeituraCanal.usuarioId (recuperado 07/08/2026)
   leiturasCanal          LeituraCanal[]
+  // Documentos de RH (11/08/2026)
+  documentosSolicitados  DocumentoColaborador[]        @relation("SolicitanteDocumento")
+  documentosAnalisados   DocumentoColaborador[]        @relation("AnalistaDocumento")
+  eventosDocumentoAutor  DocumentoColaboradorEvento[]  @relation("AutorEventoDocumento")
+  // Pagamentos / CNAB240 (reconstruído 12/08/2026)
+  folhasPagamentoCriadas FolhaPagamento[]              @relation("CriadorFolhaPagamento")
+  remessasCnabGeradas    RemessaCnab[]                 @relation("GeradorRemessaCnab")
+  pagamentosEstornados   PagamentoColaborador[]         @relation("EstornadorPagamento")
 
   @@map("usuarios")
 }
@@ -198,8 +206,18 @@ model RefreshToken {
   revogadoEm DateTime?
   // Agrupa tokens da mesma "linhagem" de rotação — permite revogar toda a
   // família de uma vez se um refresh token reusado (já revogado) for
-  // apresentado de novo, sinal de possível roubo de token. Recuperado 07/08/2026.
-  familyId   String?
+  // apresentado de novo, sinal de possível roubo de token.
+  //
+  // BUG DE PRODUÇÃO CORRIGIDO 12/08/2026: a recuperação de 07/08/2026 trouxe
+  // este campo como `String?` puro, sem o `@default(cuid())` que
+  // auth.routes.ts já pressupunha existir ("só o login inicial gera família
+  // nova, via @default no schema" — ver comentário lá). A coluna real em
+  // produção é NOT NULL (schema original, de antes das migrations
+  // rastreadas aqui) — todo login novo (sem refresh token ainda) quebrava em
+  // runtime com P2011 (Null constraint violation) na criação do primeiro
+  // RefreshToken da sessão. `@default(cuid())` é gerado pelo Prisma Client
+  // (não pela coluna do banco), então essa correção não exige migration.
+  familyId   String  @default(cuid())
   criadoEm   DateTime  @default(now())
 
   @@index([usuarioId])
@@ -249,6 +267,11 @@ enum StatusColaborador {
   ATIVO
   INATIVO
   AFASTADO
+  // Recuperado 12/08/2026: valor já existente em produção (dado real com
+  // esse status quebrava GET /colaboradores com P2032 — a coluna real no
+  // banco sempre teve este valor no enum, só faltava aqui no schema
+  // recuperado). Não exige migration: o tipo já existe no Postgres.
+  EM_AVISO
 }
 
 enum StatusAtivoInativo {
@@ -312,6 +335,11 @@ model Colaborador {
   historicoComoDestino   HistoricoTroca[]          @relation("ColaboradorDestino")
   // Relação recuperada junto com SolicitacaoServico (07/08/2026)
   solicitacoesServico    SolicitacaoServico[]
+  // Documentos de RH (11/08/2026)
+  documentos             DocumentoColaborador[]
+  // Pagamentos / CNAB240 (reconstruído 12/08/2026)
+  dadosBancarios         DadosBancariosColaborador?
+  pagamentos             PagamentoColaborador[]
 
   @@index([status])
   @@map("colaboradores")
@@ -979,6 +1007,13 @@ enum CategoriaNotificacao {
   USUARIO
   MENSAGEM
   SISTEMA
+  // FINANCEIRO (22/07/2026, pedido do Vini) — criada pro estorno de
+  // pagamento. Já existe de verdade no Postgres de produção; achado
+  // 12/08/2026 via diff completo do schema — faltava só aqui no arquivo
+  // recuperado (não exige migration, o valor já existe no banco).
+  FINANCEIRO
+  // RH — Documentos de colaborador (11/08/2026)
+  DOCUMENTO
 }
 
 enum TipoNotificacao {
@@ -1034,6 +1069,14 @@ enum TipoNotificacao {
   SISTEMA_AVISO
   // Financeiro (22/07/2026, pedido do Vini: fluxo de estorno de pagamento).
   FINANCEIRO_PAGAMENTO_ESTORNADO
+  // RH — Documentos de colaborador (11/08/2026)
+  DOCUMENTO_SOLICITADO
+  DOCUMENTO_ENVIADO
+  DOCUMENTO_APROVADO
+  DOCUMENTO_REJEITADO
+  DOCUMENTO_VENCENDO
+  DOCUMENTO_VENCIDO
+  DOCUMENTO_COMENTARIO
 }
 
 
@@ -1043,6 +1086,15 @@ enum TipoMensagem {
   DIRETA
   CANAL_UNIDADE
   CANAL_SETOR
+  // Recuperados 12/08/2026 via auditoria contra o enum real de produção
+  // (pg_enum) — ambos existiam em produção, faltando só no schema
+  // recuperado. CANAL_EMPRESA quebrava GET /mensagens/contadores (P2032).
+  // CANAL_SETOR_UNIDADE não tinha nenhum uso de código encontrado ainda —
+  // mantido aqui só pra não quebrar deserialização de linha existente; se
+  // não houver rota que crie esse tipo, é provável que seja de uma feature
+  // (canal cruzando setor+unidade) nunca terminada de recuperar.
+  CANAL_SETOR_UNIDADE
+  CANAL_EMPRESA
 }
 
 enum StatusSolicitacaoServico {
@@ -1068,33 +1120,192 @@ enum UnidadeMedidaProduto {
 }
 
 
-// ==== Pagamentos - parcial, recuperado 07/08/2026 (falta PagamentoColaborador em si) ====
+// ==== Pagamentos / CNAB240 (reconstruído 12/08/2026) ====
+//
+// Reativado a pedido do Vini — estava desativado desde a recuperação de
+// 07/08/2026 por faltarem estes 5 models (PagamentoColaborador, RemessaCnab,
+// DadosBancariosColaborador, ConfiguracaoPagamento, FolhaPagamento) e o enum
+// StatusFolhaPagamento. Reconstruídos aqui com fidelidade total à estrutura
+// REAL já existente no Postgres de produção (auditada coluna a coluna via
+// information_schema — nomes, tipos, nullability, defaults, FKs e índices
+// todos conferidos, não adivinhados). ConfiguracaoPagamento já tem uma linha
+// real configurada em produção (Sicoob, dados da empresa) — os @default
+// abaixo replicam exatamente esses valores, então NÃO alteram o dado
+// existente ao rodar migrate (só importam pra uma linha nova, que nunca vai
+// existir já que id é fixo "unica").
+enum StatusFolhaPagamento {
+  ABERTA
+  FECHADA
+}
 
-// ATENÇÃO (recuperação 07/08/2026): o módulo de Pagamentos/CNAB240 não pôde
-// ser recuperado por completo — faltam os models PagamentoColaborador,
-// RemessaCnab, DadosBancariosColaborador/ConfiguracaoPagamento e o enum
-// StatusFolhaPagamento (não encontrados em nenhuma transcrição desta sessão).
-// FolhaPagamento abaixo fica comentado até esses modelos serem reconstruídos
-// — sem isso o schema não valida. Ver Recuperacao_Codigo_Fonte_07-08-2026.md.
-// model FolhaPagamento {
-//   id            String                   @id @default(cuid())
-//   numero        Int                      @unique @default(autoincrement())
-//   competencia   String
-//   descricao     String?
-//   tipo          TipoPagamentoColaborador @default(SALARIO)
-//   dataPagamento DateTime?
-//   status        StatusFolhaPagamento     @default(ABERTA)
-//   criadoPorId   String?
-//   criadoPor     Usuario?                 @relation("CriadorFolhaPagamento", fields: [criadoPorId], references: [id])
-//   criadoEm      DateTime                 @default(now())
-//   atualizadoEm  DateTime                 @updatedAt
-//
-//   pagamentos PagamentoColaborador[]
-//   remessas   RemessaCnab[]
-//
-//   @@index([status])
-//   @@map("folhas_pagamento")
-// }
+model FolhaPagamento {
+  id            String                   @id @default(cuid())
+  numero        Int                      @unique @default(autoincrement())
+  competencia   String
+  descricao     String?
+  status        StatusFolhaPagamento     @default(ABERTA)
+  criadoPorId   String?
+  criadoPor     Usuario?                 @relation("CriadorFolhaPagamento", fields: [criadoPorId], references: [id], onDelete: SetNull)
+  criadoEm      DateTime                 @default(now())
+  atualizadoEm  DateTime                 @updatedAt
+  dataPagamento DateTime?
+  tipo          TipoPagamentoColaborador @default(SALARIO)
+
+  pagamentos PagamentoColaborador[]
+  remessas   RemessaCnab[]
+
+  @@index([status])
+  @@map("folhas_pagamento")
+}
+
+enum StatusRemessaCnab {
+  GERADA
+  ENVIADA
+  PROCESSADA
+  REJEITADA
+  CANCELADA
+}
+
+model RemessaCnab {
+  id                   String            @id @default(cuid())
+  numero               Int               @unique
+  folhaId              String?
+  folha                FolhaPagamento?   @relation(fields: [folhaId], references: [id], onDelete: SetNull)
+  dataGeracao          DateTime          @default(now())
+  dataPagamento        DateTime
+  geradoPorId          String?
+  geradoPor            Usuario?          @relation("GeradorRemessaCnab", fields: [geradoPorId], references: [id], onDelete: SetNull)
+  quantidadePagamentos Int
+  // Precisão (12,2) confirmada contra a coluna real de produção — maior que
+  // o padrão (10,2) porque é a soma de vários pagamentos, não um valor
+  // individual (ver PagamentoColaborador.valor, esse sim 10,2).
+  valorTotal           Decimal           @db.Decimal(12, 2)
+  status               StatusRemessaCnab @default(GERADA)
+  arquivoNome          String
+  // Conteúdo bruto do arquivo .rem (layout CNAB240 Sicoob) — texto fixo,
+  // gerado por utils/cnab240.ts. Guardado no banco (não no volume de
+  // anexos) porque é pequeno e precisa sobreviver a reenvio/consulta sem
+  // depender do disco do container.
+  conteudo             String
+  retornoImportadoEm   DateTime?
+  criadoEm             DateTime          @default(now())
+
+  pagamentos PagamentoColaborador[]
+
+  @@index([status])
+  @@map("remessas_cnab")
+}
+
+enum FormaPagamento {
+  PIX
+  TED
+  DOC
+  DINHEIRO
+  CHEQUE
+  OUTRO
+}
+
+model PagamentoColaborador {
+  id            String    @id @default(cuid())
+  numero        Int       @unique @default(autoincrement())
+  folhaId       String?
+  folha         FolhaPagamento? @relation(fields: [folhaId], references: [id], onDelete: Cascade)
+  colaboradorId String
+  colaborador   Colaborador @relation(fields: [colaboradorId], references: [id], onDelete: Restrict)
+  tipo          TipoPagamentoColaborador
+  valor         Decimal   @db.Decimal(10, 2)
+  dataPrevista  DateTime?
+  observacoes   String?
+  status        StatusPagamentoColaborador @default(PENDENTE)
+  remessaId     String?
+  remessa       RemessaCnab? @relation(fields: [remessaId], references: [id], onDelete: SetNull)
+  // Descrição da ocorrência de retorno do banco (código + texto — ver
+  // DESCRICAO_OCORRENCIA em utils/cnab240.ts), preenchida na importação do
+  // retorno CNAB.
+  ocorrencias     String?
+  dataConfirmacao DateTime?
+  criadoEm        DateTime  @default(now())
+  atualizadoEm    DateTime  @updatedAt
+  // Recibo de pagamento (upload único, PDF de folha inteira dividido por
+  // página ou anexo manual avulso — ver upload-recibos em pagamentos.routes.ts)
+  reciboEnviadoEm     DateTime?
+  reciboNomeOriginal  String?
+  reciboTipo          String?
+  reciboUrl           String?
+  formaPagamento      FormaPagamento?
+  // Estorno (22/07/2026) — só alcançável a partir de PAGO, ver enum abaixo.
+  dataEstorno     DateTime?
+  estornadoEm     DateTime?
+  estornadoPorId  String?
+  estornadoPor    Usuario?  @relation("EstornadorPagamento", fields: [estornadoPorId], references: [id], onDelete: SetNull)
+  motivoEstorno   String?
+
+  @@index([folhaId])
+  @@index([colaboradorId])
+  @@index([status])
+  @@index([remessaId])
+  @@map("pagamentos_colaborador")
+}
+
+model DadosBancariosColaborador {
+  id            String      @id @default(cuid())
+  colaboradorId String      @unique
+  colaborador   Colaborador @relation(fields: [colaboradorId], references: [id], onDelete: Cascade)
+  bancoCodigo   String
+  bancoNome     String
+  agencia       String
+  agenciaDv     String?
+  conta         String
+  contaDv       String?
+  tipoConta     String      @default("corrente")
+  // Preenchidos só quando o favorecido do pagamento difere do próprio
+  // colaborador (ex: conta de terceiro) — quando nulos, a geração da
+  // remessa usa nomeCompleto/cpf do próprio colaborador (ver gerar-remessa
+  // em pagamentos.routes.ts).
+  favorecidoNome String?
+  favorecidoCpf  String?
+  endereco       String
+  numero         String
+  complemento    String?
+  bairro         String
+  cidade         String
+  cep            String
+  uf             String
+  criadoEm       DateTime    @default(now())
+  atualizadoEm   DateTime    @updatedAt
+  // Sugestão de valor pro lançamento em lote (21/07/2026) — nunca
+  // obrigatório, só pré-preenche o formulário.
+  salarioPadrao           Decimal? @db.Decimal(10, 2)
+  valorAdiantamentoPadrao Decimal? @db.Decimal(10, 2)
+
+  @@map("dados_bancarios_colaborador")
+}
+
+// Linha única (id fixo "unica") com os dados da empresa pagadora — usados
+// pra montar o header/trailer do arquivo CNAB240. Defaults abaixo replicam
+// a linha real já configurada em produção (Sicoob = código 756).
+model ConfiguracaoPagamento {
+  id                       String   @id @default("unica")
+  bancoCodigo              String   @default("756")
+  bancoNome                String   @default("BANCO COOPERATIVO DO BRASIL SA")
+  razaoSocial              String   @default("ADMINISTRAR IMOVEIS LTDA")
+  cnpj                     String   @default("34689250000100")
+  convenio                 String   @default("350")
+  agencia                  String   @default("0410")
+  agenciaDv                String   @default("1")
+  conta                    String   @default("18491001")
+  contaDv                  String   @default("3")
+  endereco                 String   @default("AVENIDA DUQUE DE CAXIAS")
+  numero                   String   @default("239")
+  complemento              String   @default("")
+  cidade                   String   @default("ITATIAIUCU")
+  cep                      String   @default("35685000")
+  uf                       String   @default("MG")
+  proximoSequencialRemessa Int      @default(23)
+  atualizadoEm             DateTime @updatedAt
+
+  @@map("configuracao_pagamento")
+}
 
 enum StatusPagamentoColaborador {
   PENDENTE
@@ -1414,6 +1625,121 @@ model AcessoCanalExtra {
   @@map("acessos_canal_extra")
 }
 
+
+// ---------------------------------------------------------------------------
+// RH — Documentos de colaborador (Fase RH, 11/08/2026)
+// Reaproveita Colaborador/Usuario existentes — não duplica cadastro. Segue o
+// mesmo padrão de timeline unificada de ChamadoEvento/EventoSolicitacaoPapelaria
+// (histórico de status + comentários num único model de evento por entidade).
+// ---------------------------------------------------------------------------
+
+// Fluxo simplificado em relação ao pedido original: "SOLICITADO" já cobre
+// "aguardando o colaborador enviar" (não existe transição própria entre os
+// dois — o RH nunca precisa "mover" o card, o estado nasce correto). Estados
+// adicionais (REJEITADO/EXPIRADO/CANCELADO) mantidos porque cada um dispara
+// uma automação diferente (notificação, reenvio, auditoria).
+enum StatusDocumentoColaborador {
+  SOLICITADO   // RH pediu; aguardando envio do colaborador
+  ENVIADO      // colaborador enviou; aguardando análise do RH
+  EM_ANALISE   // RH está revisando (opcional — RH pode marcar antes de decidir)
+  APROVADO
+  REJEITADO
+  EXPIRADO     // era APROVADO com dataValidade vencida — setado pelo job de vencimento
+  CANCELADO    // RH cancelou a solicitação (ex: documento deixou de ser necessário)
+}
+
+enum TipoEventoDocumentoColaborador {
+  SOLICITACAO
+  ENVIO
+  REENVIO_SOLICITADO
+  ANALISE_APROVADA
+  ANALISE_REJEITADA
+  COMENTARIO
+  ALERTA_VENCIMENTO
+  EXPIRADO
+  CANCELADO
+}
+
+// Catálogo administrável pelo RH (mesmo racional de CategoriaEquipamento/
+// ProdutoPapelaria — lista de domínio em vez de texto livre, permite
+// relatório/filtro consistente). exigeValidade decide se a tela de análise
+// pede uma data de vencimento ao aprovar; diasAntecedenciaAlerta controla
+// quando o job de vencimento dispara notificação antes do vencimento real.
+model TipoDocumento {
+  id                     String             @id @default(cuid())
+  nome                   String             @unique
+  descricao              String?
+  exigeValidade          Boolean            @default(false)
+  diasAntecedenciaAlerta Int[]              @default([30, 15, 7, 1])
+  status                 StatusAtivoInativo @default(ATIVO)
+  criadoEm               DateTime           @default(now())
+  atualizadoEm           DateTime           @updatedAt
+
+  documentos DocumentoColaborador[]
+
+  @@map("tipos_documento")
+}
+
+model DocumentoColaborador {
+  id            String        @id @default(cuid())
+  colaboradorId String
+  colaborador   Colaborador   @relation(fields: [colaboradorId], references: [id], onDelete: Cascade)
+  tipoDocumentoId String
+  tipoDocumento TipoDocumento @relation(fields: [tipoDocumentoId], references: [id])
+
+  status StatusDocumentoColaborador @default(SOLICITADO)
+
+  solicitadoPorId String?
+  solicitadoPor   Usuario? @relation("SolicitanteDocumento", fields: [solicitadoPorId], references: [id])
+  solicitadoEm    DateTime @default(now())
+  observacaoSolicitacao String?
+
+  // Preenchidos no envio (mesma infra de arquivo dos outros anexos —
+  // ANEXOS_DIR/Railway Volume, ver utils/anexos.ts).
+  arquivoUrl          String?
+  arquivoNomeOriginal String?
+  arquivoTipo         String?
+  arquivoTamanhoBytes Int?
+  enviadoEm           DateTime?
+
+  // Preenchidos na análise.
+  dataValidade    DateTime?
+  analisadoPorId  String?
+  analisadoPor    Usuario?  @relation("AnalistaDocumento", fields: [analisadoPorId], references: [id])
+  analisadoEm     DateTime?
+  motivoRejeicao  String?
+
+  // Limiares de diasAntecedenciaAlerta já notificados para este documento —
+  // evita reenviar o mesmo alerta todo dia enquanto o vencimento não chega
+  // (ver utils/documentosVencimentoJob.ts).
+  alertasVencimentoEnviados Int[] @default([])
+
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  eventos DocumentoColaboradorEvento[]
+
+  @@index([colaboradorId])
+  @@index([tipoDocumentoId])
+  @@index([status])
+  @@index([status, dataValidade])
+  @@map("documentos_colaborador")
+}
+
+model DocumentoColaboradorEvento {
+  id         String                @id @default(cuid())
+  documentoId String
+  documento  DocumentoColaborador  @relation(fields: [documentoId], references: [id], onDelete: Cascade)
+  tipo       TipoEventoDocumentoColaborador
+  autorId    String?
+  autor      Usuario?              @relation("AutorEventoDocumento", fields: [autorId], references: [id])
+  mensagem   String?
+  detalhe    Json?
+  criadoEm   DateTime              @default(now())
+
+  @@index([documentoId])
+  @@map("documentos_colaborador_eventos")
+}
 
 // ==== Marcação de leitura de canal (recuperado 07/08/2026) ====
 model LeituraCanal {

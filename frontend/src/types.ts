@@ -291,7 +291,7 @@ export const UNIDADE_MEDIDA_PRODUTO_LABEL: Record<UnidadeMedidaProduto, string> 
 // antes disso não existia categoria pro módulo de Pagamentos.
 export type CategoriaNotificacao =
   | "CHAMADO" | "SOLICITACAO_EQUIPAMENTO" | "SOLICITACAO_PAPELARIA" | "PATRIMONIO"
-  | "LINHA_TELEFONICA" | "USUARIO" | "MENSAGEM" | "SISTEMA" | "FINANCEIRO";
+  | "LINHA_TELEFONICA" | "USUARIO" | "MENSAGEM" | "SISTEMA" | "FINANCEIRO" | "DOCUMENTO";
 export const CATEGORIA_NOTIFICACAO_LABEL: Record<CategoriaNotificacao, string> = {
   CHAMADO: "Chamados",
   SOLICITACAO_EQUIPAMENTO: "Solicitação de equipamento",
@@ -302,6 +302,7 @@ export const CATEGORIA_NOTIFICACAO_LABEL: Record<CategoriaNotificacao, string> =
   MENSAGEM: "Mensagens",
   SISTEMA: "Sistema",
   FINANCEIRO: "Financeiro",
+  DOCUMENTO: "Documentos (RH)",
 };
 
 export interface Notificacao {
@@ -1000,6 +1001,73 @@ export interface Usuario {
   colaboradorId: string | null;
   ativo?: boolean;
   precisaTrocarSenha?: boolean;
+}
+
+// RH — Documentos de colaborador (11/08/2026). Ver backend/prisma/schema.prisma
+// (models TipoDocumento/DocumentoColaborador/DocumentoColaboradorEvento) e
+// src/routes/documentos.routes.ts para o contrato completo.
+export type StatusDocumentoColaborador =
+  | "SOLICITADO" | "ENVIADO" | "EM_ANALISE" | "APROVADO" | "REJEITADO" | "EXPIRADO" | "CANCELADO";
+
+export const STATUS_DOCUMENTO_LABEL: Record<StatusDocumentoColaborador, string> = {
+  SOLICITADO: "Aguardando envio",
+  ENVIADO: "Enviado — em análise",
+  EM_ANALISE: "Em análise",
+  APROVADO: "Aprovado",
+  REJEITADO: "Rejeitado",
+  EXPIRADO: "Vencido",
+  CANCELADO: "Cancelado",
+};
+
+export type TipoEventoDocumentoColaborador =
+  | "SOLICITACAO" | "ENVIO" | "REENVIO_SOLICITADO" | "ANALISE_APROVADA"
+  | "ANALISE_REJEITADA" | "COMENTARIO" | "ALERTA_VENCIMENTO" | "EXPIRADO" | "CANCELADO";
+
+export interface TipoDocumento {
+  id: string;
+  nome: string;
+  descricao: string | null;
+  exigeValidade: boolean;
+  diasAntecedenciaAlerta: number[];
+  status: "ATIVO" | "INATIVO";
+  criadoEm: string;
+  atualizadoEm: string;
+}
+
+export interface DocumentoColaboradorEvento {
+  id: string;
+  documentoId: string;
+  tipo: TipoEventoDocumentoColaborador;
+  autorId: string | null;
+  autor?: { id: string; email: string } | null;
+  mensagem: string | null;
+  detalhe: Record<string, unknown> | null;
+  criadoEm: string;
+}
+
+export interface DocumentoColaborador {
+  id: string;
+  colaboradorId: string;
+  colaborador?: { id: string; nomeCompleto: string };
+  tipoDocumentoId: string;
+  tipoDocumento: { id: string; nome: string; descricao?: string | null; exigeValidade: boolean };
+  status: StatusDocumentoColaborador;
+  solicitadoPorId: string | null;
+  solicitadoEm: string;
+  observacaoSolicitacao: string | null;
+  arquivoUrl: string | null;
+  arquivoNomeOriginal: string | null;
+  arquivoTipo: string | null;
+  arquivoTamanhoBytes: number | null;
+  enviadoEm: string | null;
+  dataValidade: string | null;
+  analisadoPorId: string | null;
+  analisadoEm: string | null;
+  motivoRejeicao: string | null;
+  alertasVencimentoEnviados: number[];
+  criadoEm: string;
+  atualizadoEm: string;
+  eventos?: DocumentoColaboradorEvento[];
 }
 
 export interface PaginatedResponse<T> {

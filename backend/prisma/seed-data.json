@@ -1,123 +1,12 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+{
+  "unidades": [],
+  "setores": [],
+  "empresas": [],
+  "sistemas": [],
+  "categoriasEquipamento": [],
+  "marcasEquipamento": [],
+  "catalogoPapelaria": [
+    {
       "categoria": "Informática e Acessórios",
       "produtos": [
         { "nome": "Mouse Óptico (reposição)", "unidadeMedidaPadrao": "UNIDADE" },
@@ -133,3 +22,7 @@
     },
     {
       "categoria": "Sinalização e Identificação",
+      "produtos": []
+    }
+  ]
+}

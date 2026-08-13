@@ -33,11 +33,14 @@ import mensagensRoutes from "./routes/mensagens.routes";
 import perfilRoutes from "./routes/perfil.routes";
 import solicitacoesPapelariaRoutes from "./routes/solicitacoesPapelaria.routes";
 import notificacoesRoutes from "./routes/notificacoes.routes";
-// NOTA (recuperação 07/08/2026): pagamentos.routes.ts depende de models Prisma
-// não recuperados (PagamentoColaborador, RemessaCnab, etc.) — desativado
-// temporariamente até o schema ser completado. Ver
-// Recuperacao_Codigo_Fonte_07-08-2026.md.
-// import pagamentosRoutes from "./routes/pagamentos.routes";
+import documentosRoutes from "./routes/documentos.routes";
+import { iniciarAgendadorVencimentoDocumentos } from "./utils/documentosVencimentoJob";
+// Pagamentos / CNAB240 (reativado 12/08/2026, pedido do Vini) — os 5 models
+// que faltavam (FolhaPagamento, PagamentoColaborador, RemessaCnab,
+// DadosBancariosColaborador, ConfiguracaoPagamento) foram reconstruídos
+// contra a estrutura real de produção (auditoria coluna a coluna, zero
+// divergência confirmada via prisma migrate diff antes de reativar).
+import pagamentosRoutes from "./routes/pagamentos.routes";
 import solicitacoesServicoRoutes from "./routes/solicitacoesServico.routes";
 // NOTA (recuperação 07/08/2026): src/utils/aniversariosJob.ts não foi
 // encontrado em nenhuma transcrição desta sessão — desativado temporariamente
@@ -135,8 +138,9 @@ async function buildServer() {
   await app.register(perfilRoutes);
   await app.register(solicitacoesPapelariaRoutes);
   await app.register(notificacoesRoutes);
-  // Pagamentos CNAB 240 + Solicitações de Serviço (20/07/2026, pedido do Vini)
-  // await app.register(pagamentosRoutes); // desativado — ver nota acima
+  await app.register(documentosRoutes);
+  // Pagamentos CNAB 240 (20/07/2026, pedido do Vini; reativado 12/08/2026)
+  await app.register(pagamentosRoutes);
   await app.register(solicitacoesServicoRoutes);
 
   // Etapa 3 (auditoria de backend, 08/07/2026): várias rotas de POST/PUT
@@ -176,6 +180,10 @@ async function buildServer() {
   // Notificação de aniversariantes do próximo mês pro RH (17/07/2026, ver
   // utils/aniversariosJob.ts) — desativado, ver nota de import acima.
   // iniciarAgendadorAniversariantes(app);
+
+  // Vencimento de documentos de RH (11/08/2026) — expira documento aprovado
+  // vencido e alerta antecedência configurada por tipo de documento.
+  iniciarAgendadorVencimentoDocumentos(app);
 
   return app;
 }

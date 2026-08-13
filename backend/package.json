@@ -29,7 +29,7 @@
     "@fastify/multipart": "^10.0.0",
     "@fastify/rate-limit": "^11.1.0",
     "@fastify/sensible": "^6.0.4",
-    "@prisma/client": "^5.19.1",
+    "@prisma/client": "^6.19.3",
     "@sentry/node": "^10.63.0",
     "bcryptjs": "^2.4.3",
     "csv-parse": "^5.5.6",
@@ -39,13 +39,14 @@
     "fastify-plugin": "^6.0.0",
     "jszip": "^3.10.1",
     "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^2.16.105",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20.14.15",
     "pino-pretty": "^11.2.2",
-    "prisma": "^5.19.1",
+    "prisma": "^6.19.3",
     "tsx": "^4.19.0",
     "typescript": "^5.5.4"
   }

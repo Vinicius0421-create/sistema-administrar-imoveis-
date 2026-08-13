@@ -420,7 +420,13 @@ export default async function mensagensRoutes(app: FastifyInstance) {
           app.prisma.mensagem.count({
             where: {
               tipo: l.tipo,
-              ...(l.tipo === "CANAL_UNIDADE" ? { unidadeId: l.canalId } : { setorId: l.canalId }),
+              // CANAL_EMPRESA (canal da empresa inteira) não tem unidadeId/
+              // setorId — não filtra por nenhum dos dois, só pelo tipo.
+              ...(l.tipo === "CANAL_UNIDADE"
+                ? { unidadeId: l.canalId }
+                : l.tipo === "CANAL_SETOR"
+                  ? { setorId: l.canalId }
+                  : {}),
               criadoEm: { gt: l.lidaAte },
               remetenteId: { not: meuId },
             },
@@ -528,6 +534,9 @@ export default async function mensagensRoutes(app: FastifyInstance) {
     if (mensagem.tipo === "DIRETA") {
       const souParte = mensagem.remetenteId === request.user.sub || mensagem.destinatarioId === request.user.sub;
       if (!souParte) return reply.code(403).send({ error: "Você não tem acesso a este anexo." });
+    } else if (mensagem.tipo === "CANAL_EMPRESA") {
+      // Canal da empresa inteira — sem unidadeId/setorId pra checar, e
+      // podeAcessarCanal já libera geral pra este tipo.
     } else {
       const idAlvo = (mensagem.tipo === "CANAL_UNIDADE" ? mensagem.unidadeId : mensagem.setorId) as string;
       const permissao = await carregarPermissaoCanais(app, request.user);

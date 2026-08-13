@@ -46,8 +46,21 @@ export async function carregarPermissaoCanais(app: FastifyInstance, usuario: Aut
   return { irrestrito: false, setores, unidades };
 }
 
-export function podeAcessarCanal(permissao: PermissaoCanais, tipo: "CANAL_UNIDADE" | "CANAL_SETOR", id: string): boolean {
+export function podeAcessarCanal(
+  permissao: PermissaoCanais,
+  tipo: "CANAL_UNIDADE" | "CANAL_SETOR" | "CANAL_SETOR_UNIDADE" | "CANAL_EMPRESA",
+  id: string
+): boolean {
+  // CANAL_EMPRESA (recuperado 12/08/2026 — valor de enum já existente em
+  // produção, sem o restante da feature reconstruído na recuperação) é o
+  // canal da empresa inteira por definição — todo mundo autenticado tem
+  // acesso, mesmo COLABORADOR sem nenhuma exceção via AcessoCanalExtra.
+  if (tipo === "CANAL_EMPRESA") return true;
   if (permissao.irrestrito) return true;
+  // CANAL_SETOR_UNIDADE: mesmo achado — valor de enum recuperado sem
+  // nenhuma rota que o crie ou documente a regra original de acesso. Trata
+  // como CANAL_SETOR (mais restritivo que liberar geral) até a feature real
+  // ser reconstruída, se um dia for necessária.
   return tipo === "CANAL_UNIDADE" ? permissao.unidades.has(id) : permissao.setores.has(id);
 }
 

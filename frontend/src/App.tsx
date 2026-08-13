@@ -6,7 +6,7 @@ import { RedefinirSenhaPage } from "./pages/RedefinirSenha";
 import { TrocarSenhaObrigatoriaPage } from "./pages/TrocarSenhaObrigatoria";
 import { Button, COLORS, ErrorBoundary, FOCUS_RING_CLASS, FONT_DISPLAY, LoadingState, SkeletonKPIGrid, SkeletonListaCartoes } from "./components/ui";
 import {
-  Banknote, Home, Users, Laptop, Phone, Key, ShoppingCart, Wrench, Repeat, HistoryIcon, Menu, LogOut, Settings, ClipboardList, MessageCircle, UserCircle2, Search,
+  Banknote, Home, Users, Laptop, Phone, Key, ShoppingCart, Wrench, Repeat, HistoryIcon, Menu, LogOut, Settings, ClipboardList, MessageCircle, UserCircle2, Search, FileText,
 } from "./components/icons";
 import { LOGO_DATA_URI } from "./assets/logo";
 import { Papel } from "./types";
@@ -66,6 +66,7 @@ const ConfiguracoesPage = React.lazy(() => import("./pages/Configuracoes").then(
 const PortalColaborador = React.lazy(() => import("./pages/PortalColaborador").then((m) => ({ default: m.PortalColaborador })));
 const PortalSuportePage = React.lazy(() => import("./pages/PortalSuporte").then((m) => ({ default: m.PortalSuportePage })));
 const MensagensPage = React.lazy(() => import("./pages/Mensagens").then((m) => ({ default: m.MensagensPage })));
+const DocumentosPage = React.lazy(() => import("./pages/Documentos").then((m) => ({ default: m.DocumentosPage })));
 
 interface NavItem {
   key: string;
@@ -100,6 +101,8 @@ const NAV: Record<Papel, NavItem[]> = {
     { key: "colaboradores", label: "Colaboradores", icon: Users, grupo: "Pessoas" },
     // Pagamentos CNAB (20/07/2026, pedido do Vini) — folhas + remessas Sicoob.
     { key: "pagamentos", label: "Pagamentos", icon: Banknote, grupo: "Pessoas" },
+    // Documentos de RH (11/08/2026, Fase RH da Evolução Completa).
+    { key: "documentos", label: "Documentos", icon: FileText, grupo: "Pessoas" },
     { key: "configuracoes", label: "Configurações", icon: Settings, grupo: "Sistema" },
   ],
   // Reorganização de hierarquia (17/07/2026, pedido do Vini: "o gestor/
@@ -177,6 +180,11 @@ const NAV: Record<Papel, NavItem[]> = {
     { key: "solicitacoes", label: "Solicitações", icon: ShoppingCart, grupo: "Atendimento" },
     { key: "colaboradores", label: "Colaboradores", icon: Users, grupo: "Pessoas" },
     { key: "pagamentos", label: "Pagamentos", icon: Banknote, grupo: "Pessoas" },
+    // Documentos de RH (11/08/2026, Fase RH da Evolução Completa) — o
+    // módulo é dele (mesmo racional de "pagamentos" ser do FINANCEIRO
+    // abaixo); ADMINISTRADOR também gerencia (ver PAPEIS_GERENCIAM em
+    // documentos.routes.ts).
+    { key: "documentos", label: "Documentos", icon: FileText, grupo: "Pessoas" },
   ],
   // FINANCEIRO (17/07/2026, pedido do Vini: "falta um financeiro para
   // aprovar as solicitações de equipamentos, solicitações de papelaria e
@@ -674,6 +682,11 @@ function AppShell() {
       // entram no useAppData — módulo restrito, sem uso nas outras telas).
       case "pagamentos":
         return <PagamentosPage data={data} />;
+      // Documentos de RH (11/08/2026) — só ADMINISTRADOR/RH têm este item no
+      // próprio NAV (ver PAPEIS_GERENCIAM em documentos.routes.ts no
+      // backend, que também barra a rota pra quem tentar chegar direto).
+      case "documentos":
+        return <DocumentosPage data={data} onChanged={() => refetch("documentos")} />;
       case "chamados":
         return (
           <ChamadosPage

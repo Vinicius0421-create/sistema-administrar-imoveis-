@@ -10,10 +10,11 @@ import { movimentacoesApi } from "../api/movimentacoes";
 import { historicoApi } from "../api/historico";
 import { dominiosApi } from "../api/dominios";
 import { solicitacoesPapelariaApi } from "../api/solicitacoesPapelaria";
+import { documentosColaboradorApi } from "../api/documentos";
 import {
   AcessoSistema, AcessorioEquipamento, Cargo, CategoriaEquipamento, CategoriaProdutoEquipamento, CategoriaProdutoPapelaria,
-  ChamadoManutencao, Colaborador, Empresa, Equipamento, HistoricoTroca, LinhaTelefonica, LoteRateio, MarcaEquipamento,
-  MovimentacaoColaborador, ProdutoEquipamento, ProdutoPapelaria, SistemaAcesso, Setor, SolicitacaoEquipamento,
+  ChamadoManutencao, Colaborador, DocumentoColaborador, Empresa, Equipamento, HistoricoTroca, LinhaTelefonica, LoteRateio,
+  MarcaEquipamento, MovimentacaoColaborador, ProdutoEquipamento, ProdutoPapelaria, SistemaAcesso, Setor, SolicitacaoEquipamento,
   SolicitacaoPapelaria, Unidade,
 } from "../types";
 import { Papel } from "../types";
@@ -33,6 +34,13 @@ export interface AppData {
   // PAPEIS_GERENCIAM em solicitacoesPapelaria.routes.ts); fica vazia pros
   // demais, mesmo racional de `podeVerMovimentacoes` abaixo.
   solicitacoesPapelaria: SolicitacaoPapelaria[];
+  // Documentos de RH (11/08/2026) — ADMINISTRADOR/RH veem TODOS (painel de
+  // gestão); os demais papéis só os PRÓPRIOS (autoatendimento no Portal do
+  // Colaborador), mesmo racional de solicitacoesPapelaria acima. O backend
+  // já escopa isso sozinho (rotas diferentes: /documentos-colaborador vs.
+  // /documentos-colaborador/meus), então não há risco de vazamento mesmo
+  // que o flag abaixo fique desatualizado algum dia.
+  documentos: DocumentoColaborador[];
   dominios: {
     unidades: Unidade[];
     setores: Setor[];
@@ -53,7 +61,7 @@ type ResourceKey = keyof Omit<AppData, "dominios">;
 
 const EMPTY: AppData = {
   colaboradores: [], equipamentos: [], linhas: [], acessos: [], lotes: [],
-  solicitacoes: [], chamados: [], movimentacoes: [], historico: [], solicitacoesPapelaria: [],
+  solicitacoes: [], chamados: [], movimentacoes: [], historico: [], solicitacoesPapelaria: [], documentos: [],
   dominios: {
     unidades: [], setores: [], cargos: [], empresas: [], sistemas: [],
     categoriasEquipamento: [], marcasEquipamento: [], categoriasProdutoPapelaria: [], produtosPapelaria: [],
@@ -93,9 +101,10 @@ export function useAppData(papel: Papel | null) {
       // então não tem risco de vazar dado alheio mesmo se este flag algum
       // dia ficar desatualizado). Hoje todo papel busca essa lista.
       const podeVerPapelaria = true;
+      const podeGerenciarDocumentos = papel === "ADMINISTRADOR" || papel === "RH";
       const [
         colaboradores, equipamentos, linhas, acessos, lotes,
-        solicitacoes, chamados, movimentacoes, historico, solicitacoesPapelaria,
+        solicitacoes, chamados, movimentacoes, historico, solicitacoesPapelaria, documentos,
         unidades, setores, cargos, empresas, sistemas,
         categoriasEquipamento, marcasEquipamento, categoriasProdutoPapelaria, produtosPapelaria,
         categoriasProdutoEquipamento, produtosEquipamento, acessoriosEquipamento,
@@ -110,6 +119,7 @@ export function useAppData(papel: Papel | null) {
         podeVerMovimentacoes ? movimentacoesApi.listAll() : Promise.resolve([]),
         podeVerHistorico ? historicoApi.listAll() : Promise.resolve([]),
         podeVerPapelaria ? solicitacoesPapelariaApi.listAll() : Promise.resolve([]),
+        podeGerenciarDocumentos ? documentosColaboradorApi.listAll() : documentosColaboradorApi.meus(),
         dominiosApi.unidades(),
         dominiosApi.setores(),
         dominiosApi.cargos(),
@@ -125,7 +135,7 @@ export function useAppData(papel: Papel | null) {
       ]);
       setData({
         colaboradores, equipamentos, linhas, acessos, lotes,
-        solicitacoes, chamados, movimentacoes, historico, solicitacoesPapelaria,
+        solicitacoes, chamados, movimentacoes, historico, solicitacoesPapelaria, documentos,
         dominios: {
           unidades, setores, cargos, empresas, sistemas, categoriasEquipamento, marcasEquipamento,
           categoriasProdutoPapelaria, produtosPapelaria, categoriasProdutoEquipamento, produtosEquipamento,
@@ -166,11 +176,16 @@ export function useAppData(papel: Papel | null) {
         case "movimentacoes": return await movimentacoesApi.listAll().then((v) => setData((d) => ({ ...d, movimentacoes: v })));
         case "historico": return await historicoApi.listAll().then((v) => setData((d) => ({ ...d, historico: v })));
         case "solicitacoesPapelaria": return await solicitacoesPapelariaApi.listAll().then((v) => setData((d) => ({ ...d, solicitacoesPapelaria: v })));
+        case "documentos": {
+          const podeGerenciarDocumentos = papel === "ADMINISTRADOR" || papel === "RH";
+          const documentos = await (podeGerenciarDocumentos ? documentosColaboradorApi.listAll() : documentosColaboradorApi.meus());
+          return setData((d) => ({ ...d, documentos }));
+        }
       }
     } catch (e) {
       console.warn(`Falha ao atualizar a lista "${chave}" após a última ação — o dado já salvo no servidor não foi afetado.`, e);
     }
-  }, []);
+  }, [papel]);
 
   // Recarrega só as listas de domínio — usado pela página Configurações
   // depois de criar/renomear/ativar-inativar qualquer uma das 7 listas

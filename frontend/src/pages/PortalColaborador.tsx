@@ -25,6 +25,7 @@ import {
 import { LOGO_DATA_URI } from "../assets/logo";
 import { ChamadoDetalhe, fmtDataHora } from "../components/ChamadoDetalhe";
 import { MensagensPage } from "./Mensagens";
+import { DocumentosRH } from "../components/DocumentosRH";
 import { AnexosEquipamento } from "./Equipamentos";
 import {
   CATEGORIA_CHAMADO_LABEL, CATEGORIAS_CHAMADO_CRIAVEIS, CategoriaChamado, Colaborador, Equipamento, Prioridade, SolicitacaoEquipamento, SolicitacaoPapelaria, SolicitacaoServico,
@@ -97,7 +98,7 @@ export const PortalColaborador = React.forwardRef<PortalColaboradorHandle, Props
   // MensagensPage (lista de canais + conversa) não cabe confortavelmente no
   // max-w-lg (512px) usado pelo resto do Portal, pensado pra formulário de
   // uma coluna só.
-  const [tela, setTela] = useState<"inicio" | "chamado" | "solicitacao" | "papelaria" | "servico" | "mensagens">("inicio");
+  const [tela, setTela] = useState<"inicio" | "chamado" | "solicitacao" | "papelaria" | "servico" | "mensagens" | "documentos">("inicio");
   // "Nova Solicitação" única (Onda 1 do redesenho, 21/07/2026) — controla o
   // modal de escolha guiada que decide, por baixo, qual dos 4 `setTela(...)`
   // de sempre chamar. Ver <EscolhaTipoSolicitacaoModal> mais abaixo.
@@ -399,6 +400,13 @@ export const PortalColaborador = React.forwardRef<PortalColaboradorHandle, Props
     return itens.sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime());
   }, [meusChamados, minhasSolic, minhasSolicPapelaria, minhasServ]);
 
+  // Contagem de documentos que exigem ação do colaborador agora (11/08/2026,
+  // Fase RH) — usado só pro badge do botão "Meus Documentos" acima.
+  const documentosPendentesAcao = useMemo(
+    () => data.documentos.filter((d) => d.status === "SOLICITADO" || d.status === "REJEITADO").length,
+    [data.documentos]
+  );
+
   return (
     <div className={tela === "mensagens" ? "max-w-5xl mx-auto" : "max-w-lg mx-auto"}>
       <div className="text-center mb-7">
@@ -470,11 +478,38 @@ export const PortalColaborador = React.forwardRef<PortalColaboradorHandle, Props
           <Button data-tour="portal-mensagens" variant="ghost" className="w-full justify-center py-3 border border-gray-200 dark:border-slate-700" onClick={() => setTela("mensagens")}>
             <MessageCircle size={16} /> Mensagens
           </Button>
+          {/* Documentos (RH) (11/08/2026, Fase RH) — mesmo padrão de botão
+              próprio de Mensagens acima: não é um tipo de "solicitação" (não
+              passa pelo modal de escolha guiada), é autoatendimento com o
+              RH. Nome "Documentos (RH)" de propósito, pra não colidir com o
+              acordeão "Meus documentos" (patrimônio: termo de
+              responsabilidade + anexos de equipamento) já existente mais
+              abaixo — assuntos diferentes. Badge de pendência conta
+              documentos que exigem uma ação DO colaborador agora
+              (SOLICITADO = precisa enviar; REJEITADO = precisa reenviar) —
+              não conta ENVIADO/EM_ANALISE, que é "a bola está com o RH". */}
+          <Button
+            variant="ghost"
+            className="w-full justify-center py-3 border border-gray-200 dark:border-slate-700"
+            onClick={() => setTela("documentos")}
+          >
+            <FileText size={16} /> Documentos (RH)
+            {documentosPendentesAcao > 0 && (
+              <span className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-brand-600 text-white text-[10px] font-bold">
+                {documentosPendentesAcao}
+              </span>
+            )}
+          </Button>
         </div>
       ) : tela === "mensagens" ? (
         <div className="mb-7">
           <Button variant="ghost" className="mb-3" onClick={() => setTela("inicio")}>Voltar</Button>
           <MensagensPage data={data} abrirConversaComUsuarioId={conversaAlvoUsuarioId} abrirCanal={canalAlvo} />
+        </div>
+      ) : tela === "documentos" ? (
+        <div className="mb-7">
+          <Button variant="ghost" className="mb-3" onClick={() => setTela("inicio")}>Voltar</Button>
+          <DocumentosRH documentos={data.documentos} onChanged={onChanged} />
         </div>
       ) : tela === "servico" ? (
         <PortalServicoForm

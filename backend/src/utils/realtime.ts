@@ -42,7 +42,9 @@ export type RecursoDados =
   | "solicitacoesPapelaria"
   // Pagamentos CNAB (20/07/2026) — folhas/pagamentos/remessas.
   | "pagamentos"
-  | "dominios";
+  | "dominios"
+  // RH — Documentos de colaborador (11/08/2026)
+  | "documentos";
 
 export function avisarMudanca(...recursos: RecursoDados[]): void {
   if (recursos.length === 0) return;
