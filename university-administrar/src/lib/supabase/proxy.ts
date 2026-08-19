@@ -13,7 +13,17 @@ const PUBLIC_PATHS = ["/login"];
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
-  const { url, anonKey } = getSupabaseEnv();
+  let env: ReturnType<typeof getSupabaseEnv>;
+  try {
+    env = getSupabaseEnv();
+  } catch {
+    // Ambiente sem Supabase configurado (ex.: deploy novo antes de ligar o
+    // banco): deixa a requisição passar em vez de derrubar o site inteiro
+    // com 500 em toda rota. Páginas que realmente precisam do Supabase vão
+    // falhar no próprio ponto de uso, com um erro específico daquele fluxo.
+    return supabaseResponse;
+  }
+  const { url, anonKey } = env;
   const supabase = createServerClient<Database>(url, anonKey, {
     cookies: {
       getAll() {
